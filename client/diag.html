@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GyroAim sensor probe</title>
+<style>
+  body{background:#0B1016;color:#E6EDF3;font:14px/1.5 system-ui,sans-serif;
+       margin:0;padding:16px}
+  h1{font-size:14px;letter-spacing:.18em;text-transform:uppercase;
+     color:#FFB020;margin:0 0 12px}
+  h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+     color:#8195A6;margin:20px 0 8px;border-bottom:1px solid #25333F;
+     padding-bottom:6px}
+  #verdict{padding:13px;border-radius:3px;margin-bottom:6px;font-weight:600}
+  .bad{background:#FF5E3A22;border:1px solid #FF5E3A;color:#FF8E6A}
+  .good{background:#3ADB7E22;border:1px solid #3ADB7E;color:#7BE8AC}
+  .wait{background:#FFB02022;border:1px solid #FFB020;color:#FFC95E}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  td{padding:6px 4px;border-bottom:1px solid #25333F;vertical-align:top}
+  td:first-child{color:#8195A6;width:42%}
+  td:last-child{font-family:ui-monospace,Consolas,monospace;word-break:break-all}
+  .y{color:#7BE8AC}.n{color:#FF8E6A}
+  .big{font-size:17px;font-family:ui-monospace,Consolas,monospace}
+  p.tip{font-size:12px;color:#8195A6;margin:8px 0 0}
+</style>
+</head>
+<body>
+<h1>Sensor probe</h1>
+<div id="verdict" class="wait">Waiting for motion events…</div>
+<p class="tip">Hold the phone in your rifle grip and keep it still while you
+read the Axis resolution section.</p>
+
+<h2>Live sensor input</h2>
+<table id="live"></table>
+
+<h2>Axis resolution</h2>
+<table id="axes"></table>
+
+<h2>Environment</h2>
+<table id="env"></table>
+
+<script>
+"use strict";
+const cell = {};
+function set(tbl, k, v, cls){
+  const key = tbl + "|" + k;
+  if (!cell[key]){
+    const tr = document.getElementById(tbl).insertRow();
+    tr.insertCell().textContent = k;
+    cell[key] = tr.insertCell();
+  }
+  cell[key].textContent = String(v);
+  cell[key].className = cls || "";
+}
+const f = (v, d) => (v === null || v === undefined)
+  ? "null" : Number(v).toFixed(d === undefined ? 2 : d);
+const vec = (v, d) => "[" + v.map(c => f(c, d)).join(", ") + "]";
+
+window.addEventListener("error", e => set("env", "window error", e.message, "n"));
+
+set("env", "origin", location.origin);
+set("env", "isSecureContext", window.isSecureContext,
+    window.isSecureContext ? "y" : "n");
+set("env", "DeviceMotionEvent", typeof DeviceMotionEvent,
+    typeof DeviceMotionEvent === "undefined" ? "n" : "y");
+
+/* Same math as index.html, mirrored here so we can see every intermediate. */
+const dot = (a,b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm = v => { const m = Math.hypot(...v); return m > 1e-6 ? v.map(c=>c/m) : null; };
+
+let gravity = [0,0,1];          // identical initial value to index.html
+let gravityEverUpdated = false;
+let rawG = null, rawR = null;
+let events = 0, nullRate = 0, nullGrav = 0;
+
+/* Covariance of the angular-velocity vector over samples where you are
+   actually moving. Its dominant eigenvector is the axis you rotated about,
+   measured rather than assumed - which is the only way to settle whether the
+   gyro and the accelerometer agree about which way is up.
+   Packed as [xx, yy, zz, xy, xz, yz]; the eigenvector is solved on the PC. */
+let M = [0, 0, 0, 0, 0, 0], mN = 0;
+
+window.addEventListener("devicemotion", e => {
+  events++;
+  const g = e.accelerationIncludingGravity;
+  const r = e.rotationRate;
+  rawG = g; rawR = r;
+
+  if (!r || r.alpha === null){
+    nullRate++;
+  } else {
+    const w = [r.beta || 0, r.gamma || 0, r.alpha || 0];
+    if (Math.hypot(...w) > 20){        // only while genuinely moving
+      M[0] += w[0]*w[0]; M[1] += w[1]*w[1]; M[2] += w[2]*w[2];
+      M[3] += w[0]*w[1]; M[4] += w[0]*w[2]; M[5] += w[1]*w[2];
+      mN++;
+    }
+  }
+  if (!g || g.x === null){
+    nullGrav++;
+  } else {
+    const k = 0.02;
+    gravity = [gravity[0]+k*(g.x-gravity[0]),
+               gravity[1]+k*(g.y-gravity[1]),
+               gravity[2]+k*(g.z-gravity[2])];
+    gravityEverUpdated = true;
+  }
+});
+
+/* The screen faces away from you in a rifle grip, so ship the readings to the
+   PC instead of asking anyone to read them off the phone. */
+let ws = null, wsOK = false, tick = 0;
+function wsConnect(){
+  try { ws = new WebSocket(`ws://${location.hostname}:8001`); }
+  catch (e) { return; }
+  ws.onopen  = () => { wsOK = true;  set("env", "reporting to PC", "connected", "y"); };
+  ws.onclose = () => { wsOK = false; set("env", "reporting to PC", "reconnecting", "n");
+                       setTimeout(wsConnect, 1500); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+}
+wsConnect();
+
+setInterval(() => {
+  set("live", "devicemotion events", events, events ? "y" : "n");
+  set("live", "accelerationIncludingGravity",
+      rawG ? `x=${f(rawG.x)} y=${f(rawG.y)} z=${f(rawG.z)}` : "null",
+      (!rawG || rawG.x === null) ? "n" : "y");
+  set("live", "rotationRate",
+      rawR ? `a=${f(rawR.alpha,1)} b=${f(rawR.beta,1)} g=${f(rawR.gamma,1)}` : "null",
+      (!rawR || rawR.alpha === null) ? "n" : "y");
+  set("live", "events w/ null rotationRate", nullRate, nullRate ? "n" : "y");
+  set("live", "events w/ null gravity", nullGrav, nullGrav ? "n" : "y");
+
+  const up = norm(gravity) || [0,0,1];
+  const barrel = [0,1,0];                       // portrait grip, as you hold it
+  const flat = norm(barrel.map((c,i) => c - dot(barrel,up)*up[i]));
+  const right = flat ? norm(cross(flat, up)) : [1,0,0];
+  const w = rawR ? [rawR.beta||0, rawR.gamma||0, rawR.alpha||0] : [0,0,0];
+
+  set("axes", "gravity (smoothed)", vec(gravity), gravityEverUpdated ? "y" : "n");
+  set("axes", "up (normalised)", vec(up, 3));
+  set("axes", "world-right", vec(right, 3));
+  set("axes", "yaw  (deg/s)", f(-dot(w, up), 1), "big");
+  set("axes", "pitch (deg/s)", f(dot(w, right), 1), "big");
+
+  /* Which device axis is vertical tells us the grip the code thinks you have. */
+  const ax = ["x (screen short edge)", "y (top of phone)", "z (out of screen)"];
+  const dom = up.map(Math.abs).indexOf(Math.max(...up.map(Math.abs)));
+  set("axes", "vertical axis is device", ax[dom]);
+
+  if (wsOK && ++tick % 1 === 0){          // every 300ms - enough to segment motions
+    const r2 = a => a.map(c => Number(Number(c).toFixed(3)));
+    ws.send(JSON.stringify({
+      t: "probe",
+      ev: events,
+      nullRate, nullGrav,
+      gravOK: gravityEverUpdated,
+      accel: (rawG && rawG.x !== null) ? r2([rawG.x, rawG.y, rawG.z]) : null,
+      rate:  (rawR && rawR.alpha !== null)
+               ? r2([rawR.alpha, rawR.beta, rawR.gamma]) : null,
+      grav: r2(gravity),
+      up:   r2(up),
+      right: r2(right),
+      yaw:   Number((-dot(w, up)).toFixed(2)),
+      pitch: Number(dot(w, right).toFixed(2)),
+      vertAxis: "xyz"[dom],
+      M: M.map(c => Number(c.toFixed(1))),
+      mN,
+    }));
+  }
+
+  const v = document.getElementById("verdict");
+  if (!events){
+    v.className = "bad"; v.textContent = "No motion events at all.";
+  } else if (!gravityEverUpdated){
+    v.className = "bad";
+    v.textContent = "CONFIRMED: accelerationIncludingGravity is unavailable, "
+      + "so 'up' is stuck at the flat-on-a-desk default. This is what swaps "
+      + "your yaw and pitch.";
+  } else if (dom === 2){
+    v.className = "wait";
+    v.textContent = "Gravity works, but 'up' is still along the screen normal "
+      + "- either the phone is flat, or it has not settled yet. Hold your grip "
+      + "for 3 more seconds.";
+  } else {
+    v.className = "good";
+    v.textContent = "Gravity is resolving correctly for this grip. Yaw/pitch "
+      + "should be separated - if aim is still wrong it is a sign, not a swap.";
+  }
+}, 300);
+</script>
+</body>
+</html>

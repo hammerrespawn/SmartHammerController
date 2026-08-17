@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GyroAim · Run analysis</title>
+<style>
+  :root{
+    --yellow:#FAF004; --black:#050506; --cyan:#00E5FF; --cyan-mute:#49A1AC;
+    --mustard:#C6C625; --warm:#FF8A00;
+    --line:#23231A; --mist:#8A8A72; --ink:#EDEDE2;
+    --mono:ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--black);color:var(--ink);font-family:var(--sans);
+       padding:26px 30px 60px;min-height:100vh}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+       background:repeating-linear-gradient(to bottom,#FAF00406 0 1px,transparent 1px 3px)}
+  .wrap{position:relative;z-index:1;max-width:1280px;margin:0 auto}
+
+  header{border-left:2px solid var(--yellow);padding-left:12px}
+  .chan{font:700 20px/1 var(--mono);letter-spacing:.10em;color:var(--yellow);
+        text-transform:uppercase;text-shadow:2px 0 0 #00E5FF3D}
+  .chan span{font-size:13px;letter-spacing:.30em;color:var(--mustard);margin-left:4px}
+  .tag{font:9px/1 var(--mono);letter-spacing:.34em;color:var(--cyan-mute);
+       margin-top:6px;text-transform:uppercase}
+
+  .titlebar{display:flex;align-items:flex-end;gap:14px;margin:22px 0 20px;flex-wrap:wrap}
+  h1{font:600 22px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase}
+  h1 b{color:var(--yellow);font-weight:600}
+  .when{font:10px/1 var(--mono);letter-spacing:.16em;color:var(--mist);text-transform:uppercase}
+  .beta{margin-left:auto;font:700 9px/1 var(--mono);letter-spacing:.2em;
+        background:var(--cyan);color:var(--black);padding:5px 9px;text-transform:uppercase}
+
+  h2.sec{font:600 10px/1 var(--mono);letter-spacing:.24em;color:var(--mist);
+         text-transform:uppercase;margin:22px 0 10px;padding-bottom:8px;
+         border-bottom:1px solid var(--line)}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:10px}
+  .stat{border:1px solid var(--line);border-left:2px solid var(--yellow);
+        background:#08080A;padding:13px 14px;
+        clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px))}
+  .stat.cool{border-left-color:var(--cyan)} .stat.warm{border-left-color:var(--warm)}
+  .stat.flat{border-left-color:var(--line)}
+  .stat i{font-style:normal;display:block;font:9px/1.3 var(--mono);letter-spacing:.18em;
+          color:var(--mist);text-transform:uppercase}
+  .stat b{display:block;font:600 24px/1.1 var(--mono);margin-top:9px}
+  /* The sub-label goes on its own line: inline, "14" followed by "2.8/min"
+     reads as the single number 142.8. */
+  .stat b em{display:block;font-style:normal;font:10px/1 var(--mono);
+             color:var(--mist);margin-top:6px;letter-spacing:.14em;
+             text-transform:uppercase}
+  .stat.cool b{color:var(--cyan)} .stat.warm b{color:var(--warm)} .stat.flat b{color:var(--ink)}
+
+  section.panel{border:1px solid var(--line);background:#08080A;margin-bottom:16px;
+      clip-path:polygon(0 0,calc(100% - 13px) 0,100% 13px,100% 100%,13px 100%,0 calc(100% - 13px))}
+  .phead{display:flex;align-items:center;gap:12px;padding:12px 15px;border-bottom:1px solid var(--line)}
+  .phead b{font:600 12px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase}
+  .phead i{font-style:normal;font:9px/1 var(--mono);letter-spacing:.14em;color:var(--cyan-mute);text-transform:uppercase}
+  .phead .sp{margin-left:auto;display:flex;gap:7px}
+  .pbody{padding:15px}
+  button.mini{background:transparent;border:1px solid var(--line);color:var(--mist);
+     font:9px/1 var(--mono);letter-spacing:.14em;padding:7px 10px;text-transform:uppercase;cursor:pointer}
+  button.mini:hover{border-color:var(--yellow);color:var(--yellow)}
+  button.mini.on{border-color:var(--yellow);color:var(--yellow);background:#FAF0040F}
+
+  .mark{display:flex;align-items:baseline;gap:7px;margin-bottom:9px;opacity:.72}
+  .mark b{font:700 13px/1 var(--mono);letter-spacing:.10em;color:var(--yellow);
+          text-transform:uppercase;text-shadow:1.5px 0 0 #00E5FF33}
+  .mark span{font:9px/1 var(--mono);letter-spacing:.28em;color:var(--mustard);text-transform:uppercase}
+  .mark i{font-style:normal;margin-left:auto;font:8px/1 var(--mono);letter-spacing:.22em;
+          color:#3A3A2C;text-transform:uppercase}
+
+  .stage{position:relative}
+  canvas{display:block;width:100%;background:#050506;cursor:crosshair;touch-action:none}
+  #tip{position:absolute;pointer-events:none;opacity:0;transition:opacity .08s linear;
+       background:#0A0A0CF2;border:1px solid var(--yellow);padding:9px 11px;min-width:160px;
+       clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px))}
+  #tip.on{opacity:1}
+  #tip .k{font:700 10px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--yellow)}
+  #tip .r{display:flex;justify-content:space-between;gap:14px;font:10px/1.7 var(--mono);color:var(--mist)}
+  #tip .r b{color:var(--ink);font-weight:400}
+  #tip .note{margin-top:6px;font:9px/1.5 var(--mono);color:var(--cyan-mute);max-width:210px}
+
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;font:9px/1.6 var(--mono);
+          letter-spacing:.14em;color:var(--mist);text-transform:uppercase}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .swatch{width:16px;height:5px;display:inline-block;border-radius:3px}
+
+  .finding{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .finding:last-child{border-bottom:0}
+  .finding .badge{flex:0 0 auto;font:700 8px/1 var(--mono);letter-spacing:.16em;padding:5px 7px;
+                  text-transform:uppercase;height:fit-content}
+  .badge.good{background:var(--cyan);color:var(--black)}
+  .badge.watch{background:var(--warm);color:var(--black)}
+  .badge.info{background:var(--line);color:var(--mist)}
+  .finding p{font-size:12.5px;line-height:1.65;color:var(--ink)}
+  .finding p em{font-style:normal;color:var(--yellow);font-family:var(--mono)}
+  .finding p span{display:block;color:var(--mist);font-size:11.5px;margin-top:3px}
+
+  table{width:100%;border-collapse:collapse;font:11px/1.5 var(--mono)}
+  td,th{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--mist);font-weight:400;font-size:9px;letter-spacing:.18em;text-transform:uppercase}
+  td.n{text-align:right;color:var(--yellow)}
+  footer{margin-top:26px;font:8px/1.6 var(--mono);letter-spacing:.2em;color:#3A3A2C;text-transform:uppercase}
+  .miss{color:var(--mist);font-size:11.5px;line-height:1.75}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="chan">Hammer<span>Respawn</span></div>
+    <div class="tag">AI • AR • Hardware • Chaos</div>
+  </header>
+
+  <div class="titlebar">
+    <h1 id="title">Run <b>analysis</b></h1>
+    <div class="when" id="when">—</div>
+    <div class="beta">Telemetry beta</div>
+  </div>
+
+  <h2 class="sec">The run</h2>
+  <div class="grid" id="stats"></div>
+
+  <h2 class="sec">Aim quality</h2>
+  <div class="grid" id="quality"></div>
+
+  <section class="panel" style="margin-top:16px">
+    <div class="phead"><b>What this run tells you</b><i>derived from your own trace</i></div>
+    <div class="pbody" id="findings"></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead">
+      <b>Aim path</b><i>yaw × pitch × time</i>
+      <div class="sp">
+        <button class="mini on" id="b-spin">Auto-spin</button>
+        <button class="mini" id="b-fire">Firing only</button>
+        <button class="mini" id="b-flick">Flicks only</button>
+        <button class="mini" id="b-reset">Reset view</button>
+      </div>
+    </div>
+    <div class="pbody">
+      <div class="mark"><b>Hammer</b><span>Respawn</span><i>Aim telemetry</i></div>
+      <div class="stage">
+        <canvas id="scene" height="560"></canvas>
+        <div id="tip"></div>
+      </div>
+      <div class="legend">
+        <span><i class="swatch" style="background:var(--cyan)"></i>steady</span>
+        <span><i class="swatch" style="background:var(--yellow)"></i>fast</span>
+        <span><i class="swatch" style="background:var(--warm)"></i>firing</span>
+        <span><i class="swatch" style="background:#FF3B6B"></i>overshoot</span>
+        <span><i class="swatch" style="background:#00E5FF;border-radius:50%;width:9px;height:9px"></i>run starts</span>
+        <span><i class="swatch" style="background:var(--yellow);border-radius:50%;width:9px;height:9px"></i>run ends</span>
+        <span>hover the pipe to inspect · drag to rotate · wheel to zoom · shift-drag to pan</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><b>Timeline</b><i>turn rate · firing shaded · flicks marked</i></div>
+    <div class="pbody"><canvas id="strip" height="160"></canvas></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><b>Actions</b><i>what you pressed</i></div>
+    <div class="pbody"><table id="acts"></table></div>
+  </section>
+
+  <section class="panel">
+    <div class="phead"><b>Not yet measured</b><i>in development</i></div>
+    <div class="pbody">
+      <p class="miss">Accuracy, hits and eliminations are absent because the controller
+      only sends input — it never reads the game's result, so it cannot know whether a
+      shot landed. Everything above is measured from your own motion. Reaching hit data
+      needs the alert system to recognise an on-screen hitmarker or elimination banner,
+      which is the next piece of work.</p>
+    </div>
+  </section>
+
+  <footer id="foot">GyroAim telemetry · HR-CTRL-0x01</footer>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+
+let S = null, trace = [], A = null;
+let fireOnly = false, flickOnly = false, spin = true;
+let rotX = -0.42, rotY = 0.62, zoom = 1, panX = 0, panY = 0;
+let screenPts = [];           // last projected positions, for hit-testing
+let hoverIdx = -1;
+
+fetch("/session/" + encodeURIComponent(qs.get("id") || "") + ".json")
+  .then(r => r.json()).then(d => { S = d; boot(); })
+  .catch(() => { $("title").innerHTML = "Run <b>not found</b>"; });
+
+const fmtDur = s => { const m = Math.floor(s / 60);
+  return m ? m + "m " + Math.round(s % 60) + "s" : Math.round(s) + "s"; };
+const med = a => a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : 0;
+
+/* ------------------------------------------------------------ analysis -- */
+/* Everything here is derived from the motion trace. The useful questions for
+   an aimer are not "how far did you turn" but "when you threw the crosshair at
+   something, did it land, and how long did it take to stop wobbling" - so the
+   analysis is built around flicks and what happens immediately after one. */
+const FLICK_MIN = 110;   // deg/s - a deliberate throw rather than tracking
+const SETTLE_TO = 22;    // deg/s - considered stopped
+const HOT       = 30;    // deg/s - "turning hard" for firing discipline
+
+function analyse(){
+  const n = trace.length;
+  const sp = trace.map(r => Math.hypot(r[1], r[2]));
+  const cls = new Array(n).fill("track");
+  const over = new Array(n).fill(false);
+  const dt = S.seconds / Math.max(1, n);
+
+  // Flicks: a peak above FLICK_MIN, then the time taken to fall quiet again.
+  const flicks = [];
+  let i = 1;
+  while (i < n - 1){
+    if (sp[i] < FLICK_MIN){ i++; continue; }
+    let s = i; while (s > 0 && sp[s - 1] > SETTLE_TO) s--;
+    let peak = i, e = i;
+    while (e < n - 1 && sp[e] > SETTLE_TO){ if (sp[e] > sp[peak]) peak = e; e++; }
+
+    // Overshoot: yaw reversing direction after the peak means the crosshair
+    // went past the mark and had to be pulled back.
+    const dir = Math.sign(trace[peak][1]) || 1;
+    let back = 0;
+    for (let k = peak; k < e; k++){
+      const v = trace[k][1];
+      if (Math.sign(v) === -dir) back += Math.abs(v) * dt;
+    }
+    const settle = (trace[e] ? trace[e][0] : S.seconds) - trace[peak][0];
+    flicks.push({start:s, peak, end:e, rate:sp[peak], settle,
+                 overshoot:back, t:trace[peak][0]});
+    for (let k = s; k < e; k++) cls[k] = "flick";
+    if (back > 3) for (let k = peak; k < e; k++){ over[k] = true; cls[k] = "over"; }
+    i = e + 1;
+  }
+  for (let k = 0; k < n; k++){
+    if (trace[k][5] & 1) cls[k] = over[k] ? "over" : "fire";
+    else if (sp[k] < 4 && cls[k] === "track") cls[k] = "idle";
+  }
+
+  // Direction reversals per second while firing: the shake in your hold.
+  let rev = 0, fireSamples = 0;
+  for (let k = 1; k < n; k++){
+    if (!(trace[k][5] & 1)) continue;
+    fireSamples++;
+    if (Math.sign(trace[k][1]) !== Math.sign(trace[k - 1][1]) &&
+        Math.abs(trace[k][1]) > 3) rev++;
+  }
+  const fireSec = fireSamples * dt;
+
+  // Firing while swinging: shots thrown out during a turn.
+  let hotFire = 0;
+  for (let k = 0; k < n; k++) if ((trace[k][5] & 1) && sp[k] > HOT) hotFire++;
+
+  // Left/right symmetry - an asymmetric result usually means grip or setup,
+  // not skill.
+  let left = 0, right = 0;
+  for (const r of trace){ if (r[1] < 0) left -= r[1] * dt; else right += r[1] * dt; }
+
+  const withOver = flicks.filter(f => f.overshoot > 3);
+  const yawAbs = trace.reduce((a, r) => a + Math.abs(r[1]) * dt, 0);
+  const pitAbs = trace.reduce((a, r) => a + Math.abs(r[2]) * dt, 0);
+
+  return {
+    sp, cls, over, flicks,
+    flickCount: flicks.length,
+    flicksPerMin: flicks.length / Math.max(1, S.seconds / 60),
+    medSettle: med(flicks.map(f => f.settle)),
+    medFlickRate: med(flicks.map(f => f.rate)),
+    overshootPct: flicks.length ? withOver.length / flicks.length * 100 : 0,
+    medOvershoot: med(withOver.map(f => f.overshoot)),
+    revPerSec: fireSec > 0.5 ? rev / fireSec : 0,
+    hotFirePct: fireSamples ? hotFire / fireSamples * 100 : 0,
+    hvRatio: yawAbs > 0 ? pitAbs / yawAbs * 100 : 0,
+    lrBias: (left + right) > 0 ? (right - left) / (right + left) * 100 : 0,
+    idlePct: cls.filter(c => c === "idle").length / Math.max(1, n) * 100,
+  };
+}
+
+/* --------------------------------------------------------------- boot --- */
+function boot(){
+  trace = S.trace || [];
+  if (!trace.length){ $("title").innerHTML = "Run <b>has no data</b>"; return; }
+  A = analyse();
+  const q = S.summary || {};
+  $("title").innerHTML = (S.game || "Session") + " <b>analysis</b>";
+  $("when").textContent = new Date(S.started).toLocaleString();
+  $("foot").textContent = "GyroAim telemetry · " + S.id + " · " +
+    (q.sampleHz || 0) + " Hz capture · " + trace.length + " samples";
+
+  const pct = v => S.seconds ? Math.round(v / S.seconds * 100) : 0;
+  const tile = (l, v, s, c) =>
+    `<div class="stat ${c || ""}"><i>${l}</i><b>${v}${s ? `<em>${s}</em>` : ""}</b></div>`;
+
+  $("stats").innerHTML = [
+    tile("Run length", fmtDur(S.seconds), "", "flat"),
+    tile("Shots fired", q.shots ?? 0, "", "warm"),
+    tile("Time firing", (q.fireSec ?? 0) + "s", pct(q.fireSec) + "%", "warm"),
+    tile("Time scoped", (q.adsSec ?? 0) + "s", pct(q.adsSec) + "%", "cool"),
+    tile("Time moving", (q.moveSec ?? 0) + "s", pct(q.moveSec) + "%", "flat"),
+    tile("Yaw travelled", (q.yawTotal ?? 0) + "°", "", "flat"),
+    tile("Peak turn rate", (q.peakRate ?? 0), "°/s", "cool"),
+    tile("Median turn rate", (q.medRate ?? 0), "°/s", "flat"),
+  ].join("");
+
+  $("quality").innerHTML = [
+    tile("Flicks", A.flickCount, A.flicksPerMin.toFixed(1) + "/min", ""),
+    tile("Median flick speed", Math.round(A.medFlickRate), "°/s", ""),
+    tile("Settle time", Math.round(A.medSettle * 1000), "ms", "cool"),
+    tile("Overshoot rate", Math.round(A.overshootPct) + "%", "of flicks", "warm"),
+    tile("Median overshoot", A.medOvershoot.toFixed(1) + "°", "", "warm"),
+    tile("Shake while firing", A.revPerSec.toFixed(1), "rev/s", "warm"),
+    tile("Firing while turning", Math.round(A.hotFirePct) + "%", "of shots", "warm"),
+    tile("Vertical vs horizontal", Math.round(A.hvRatio) + "%", "", "flat"),
+    tile("Left / right balance", (A.lrBias >= 0 ? "+" : "") + Math.round(A.lrBias) + "%",
+         A.lrBias >= 0 ? "rightward" : "leftward", "flat"),
+    tile("Crosshair at rest", Math.round(A.idlePct) + "%", "of run", "flat"),
+  ].join("");
+
+  renderFindings();
+
+  const counts = {};
+  for (const [, kind, detail] of (S.events || [])){
+    const key = kind === "macro" ? "macro · " + detail : kind;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const rows = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  $("acts").innerHTML = "<tr><th>Action</th><th style='text-align:right'>Count</th></tr>"
+    + (rows.length ? rows.map(([k, v]) => `<tr><td>${k}</td><td class="n">${v}</td></tr>`).join("")
+                   : "<tr><td colspan='2' style='color:var(--mist)'>No presses recorded.</td></tr>");
+
+  sizeCanvases(); drawStrip(); requestAnimationFrame(loop);
+}
+
+/* Plain-language readings. Each one states the measured number and what it
+   implies - never a verdict without the figure it came from. */
+function renderFindings(){
+  const f = [];
+  const add = (badge, head, sub) =>
+    f.push(`<div class="finding"><span class="badge ${badge}">${badge}</span>
+            <p>${head}<span>${sub}</span></p></div>`);
+
+  if (A.flickCount < 3){
+    add("info", "Too few flicks in this run to judge aim mechanics.",
+        "Longer runs with more engagements give the settle and overshoot figures something to work with.");
+  } else {
+    if (A.overshootPct > 45)
+      add("watch", `You overshoot on <em>${Math.round(A.overshootPct)}%</em> of flicks, pulling back a median <em>${A.medOvershoot.toFixed(1)}°</em>.`,
+          "That is the signature of sensitivity set above what your hands are calibrated for. Try dropping horizontal sensitivity ~10%, or raise smoothing a step, and watch whether this figure falls.");
+    else if (A.overshootPct < 20)
+      add("good", `Only <em>${Math.round(A.overshootPct)}%</em> of your flicks overshoot.`,
+          "Your sensitivity suits your hand speed. If anything you have headroom to raise it for faster target acquisition.");
+    else
+      add("info", `Overshoot on <em>${Math.round(A.overshootPct)}%</em> of flicks, median <em>${A.medOvershoot.toFixed(1)}°</em>.`,
+          "Within a normal band. Worth re-checking after any sensitivity change.");
+
+    const ms = Math.round(A.medSettle * 1000);
+    if (ms > 420)
+      add("watch", `Crosshair takes a median <em>${ms}ms</em> to settle after a flick.`,
+          "Time spent settling is time you are neither aiming nor shooting. Lower smoothing shortens it, at the cost of more visible hand tremor — worth trying one step at a time.");
+    else
+      add("good", `Crosshair settles in a median <em>${ms}ms</em> after a flick.`,
+          "Quick enough that the flick itself is the limiting factor, not the recovery.");
+  }
+
+  if (A.hotFirePct > 35)
+    add("watch", `<em>${Math.round(A.hotFirePct)}%</em> of your firing happens while turning faster than ${HOT}°/s.`,
+        "Shots thrown out mid-swing mostly miss. Settling before the trigger — even by 100ms — usually costs less time than the follow-up burst does.");
+  else if (A.hotFirePct > 0)
+    add("good", `Only <em>${Math.round(A.hotFirePct)}%</em> of firing happens mid-swing.`,
+        "Good trigger discipline: you are stopping the crosshair before committing.");
+
+  if (A.revPerSec > 3.5)
+    add("watch", `Your aim reverses direction <em>${A.revPerSec.toFixed(1)} times a second</em> while firing.`,
+        "That is micro-correction rather than tracking. A slightly larger deadzone, or more smoothing, will steady the hold.");
+
+  if (A.hvRatio < 12)
+    add("info", `Vertical movement is only <em>${Math.round(A.hvRatio)}%</em> of horizontal.`,
+        "Most players under-use pitch and end up strafing to line up shots that a small vertical correction would have taken. Worth watching in your next run.");
+
+  if (Math.abs(A.lrBias) > 25)
+    add("info", `Turning is <em>${Math.abs(Math.round(A.lrBias))}%</em> biased ${A.lrBias > 0 ? "rightward" : "leftward"}.`,
+        "Strong asymmetry usually comes from grip or seating rather than skill — the wrist has more travel one way than the other.");
+
+  if (A.idlePct > 55)
+    add("info", `The crosshair was at rest for <em>${Math.round(A.idlePct)}%</em> of the run.`,
+        "Expected for holding an angle; high figures on an aggressive run suggest the deadzone may be eating small adjustments.");
+
+  $("findings").innerHTML = f.join("") ||
+    `<p class="miss">Not enough movement in this run to draw anything useful from.</p>`;
+}
+
+/* ------------------------------------------------------------------ 3D -- */
+/* Hand-rolled rather than pulled from a CDN: this page is served by the local
+   agent, which may have no route to the internet, and a dependency that failed
+   to load would take the whole view with it.
+
+   The path is drawn as a tube - each segment is a quad whose width follows the
+   perspective term, with a lighter core stroke over it. Segments are painted
+   far-to-near so the nearer pipe correctly occludes what is behind it. */
+const COLS = {
+  idle:  [70, 78, 70],
+  track: [0, 229, 255],
+  flick: [250, 240, 4],
+  fire:  [255, 138, 0],
+  over:  [255, 59, 107],
+};
+
+function project(p, w, h){
+  const cx = Math.cos(rotX), sx = Math.sin(rotX);
+  const cy = Math.cos(rotY), sy = Math.sin(rotY);
+  const [x, y, z] = p;
+  const x1 =  x * cy + z * sy;
+  const z1 = -x * sy + z * cy;
+  const y1 =  y * cx - z1 * sx;
+  const z2 =  y * sx + z1 * cx;
+  const d = 3.2, s = d / (d + z2);
+  return [w/2 + x1 * s * 270 * zoom + panX, h/2 - y1 * s * 270 * zoom + panY, s, z2];
+}
+
+function bounds(){
+  let a = 1e9, b = -1e9, c = 1e9, d = -1e9;
+  for (const r of trace){ a = Math.min(a, r[3]); b = Math.max(b, r[3]);
+                          c = Math.min(c, r[4]); d = Math.max(d, r[4]); }
+  return {yMin:a, yMax:b, pMin:c, pMax:d};
+}
+
+function drawScene(){
+  const cv = $("scene"), g = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  g.clearRect(0, 0, w, h);
+  if (!trace.length) return;
+
+  const B = bounds();
+  const spanY = Math.max(60, B.yMax - B.yMin);
+  const spanP = Math.max(40, B.pMax - B.pMin);
+  const T = Math.max(1, S.seconds);
+  const pt = r => [((r[3] - B.yMin) / spanY - 0.5) * 2,
+                   ((r[4] - B.pMin) / spanP - 0.5) * 1.15,
+                   (r[0] / T - 0.5) * 2];
+
+  g.strokeStyle = "#171711"; g.lineWidth = 1;
+  for (let i = 0; i <= 10; i++){
+    const u = (i / 10 - 0.5) * 2;
+    const a = project([u, -0.60, -1], w, h), b = project([u, -0.60, 1], w, h);
+    const c = project([-1, -0.60, u], w, h), d = project([1, -0.60, u], w, h);
+    g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke();
+    g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(d[0], d[1]); g.stroke();
+  }
+
+  screenPts = new Array(trace.length);
+  for (let i = 0; i < trace.length; i++) screenPts[i] = project(pt(trace[i]), w, h);
+
+  const dpr = window.devicePixelRatio || 1;
+  const segs = [];
+  for (let i = 1; i < trace.length; i++){
+    const c = A.cls[i];
+    if (fireOnly && !(trace[i][5] & 1)) continue;
+    if (flickOnly && c !== "flick" && c !== "over") continue;
+    segs.push(i);
+  }
+  // Painter's algorithm: without this the tube looks inside-out on rotation.
+  segs.sort((p, q) => screenPts[q][3] - screenPts[p][3]);
+
+  for (const i of segs){
+    const a = screenPts[i - 1], b = screenPts[i];
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+    const nx = -dy, ny = dx;
+    const rad = (A.cls[i] === "over" ? 9.5 : 7.6) * dpr * b[2] * zoom * 0.9;
+    const col = COLS[A.cls[i]] || COLS.track;
+    const dim = 0.42 + 0.58 * b[2];
+    const hot = hoverIdx === i;
+
+    g.beginPath();
+    g.moveTo(a[0] + nx * rad, a[1] + ny * rad);
+    g.lineTo(b[0] + nx * rad, b[1] + ny * rad);
+    g.lineTo(b[0] - nx * rad, b[1] - ny * rad);
+    g.lineTo(a[0] - nx * rad, a[1] - ny * rad);
+    g.closePath();
+    g.fillStyle = `rgba(${Math.round(col[0]*dim*0.55)},${Math.round(col[1]*dim*0.55)},${Math.round(col[2]*dim*0.55)},1)`;
+    g.fill();
+
+    // Core highlight: what actually sells it as a pipe rather than a ribbon.
+    g.beginPath();
+    g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]);
+    g.lineCap = "round";
+    g.lineWidth = rad * (hot ? 1.5 : 0.85);
+    g.strokeStyle = hot ? "#FFFFFF"
+      : `rgba(${col[0]},${col[1]},${col[2]},${(0.55 + 0.45 * b[2]).toFixed(3)})`;
+    g.stroke();
+  }
+
+  // Markers only - no text labels, which sat against the pipe and read as
+  // something stuck to it. Colour carries the meaning instead: cyan begins,
+  // yellow ends, matching the legend.
+  const mark = (i, col) => {
+    const p = screenPts[i]; if (!p) return;
+    const r = 13 * dpr;
+    g.beginPath(); g.arc(p[0], p[1], r, 0, 7);
+    g.fillStyle = col + "33"; g.fill();
+    g.lineWidth = 2.5 * dpr; g.strokeStyle = col; g.stroke();
+    g.beginPath(); g.arc(p[0], p[1], r * 0.42, 0, 7);
+    g.fillStyle = col; g.fill();
+  };
+  mark(0, "#00E5FF");
+  mark(trace.length - 1, "#FAF004");
+
+  if (hoverIdx >= 0 && screenPts[hoverIdx]) drawPointer(g, screenPts[hoverIdx], dpr);
+}
+
+/* A leader line from the tooltip to the exact sample it describes. */
+function drawPointer(g, p, dpr){
+  const tip = $("tip");
+  const cv = $("scene");
+  const ax = (tip.offsetLeft + tip.offsetWidth / 2) * dpr * (cv.width / (cv.clientWidth * dpr));
+  const ay = (tip.offsetTop + tip.offsetHeight) * dpr * (cv.height / (cv.clientHeight * dpr));
+  g.strokeStyle = "#FAF004"; g.lineWidth = 1.2 * dpr;
+  g.setLineDash([4 * dpr, 3 * dpr]);
+  g.beginPath(); g.moveTo(ax, ay); g.lineTo(p[0], p[1]); g.stroke();
+  g.setLineDash([]);
+  const ang = Math.atan2(p[1] - ay, p[0] - ax);
+  const s = 7 * dpr;
+  g.beginPath();
+  g.moveTo(p[0], p[1]);
+  g.lineTo(p[0] - s * Math.cos(ang - 0.4), p[1] - s * Math.sin(ang - 0.4));
+  g.lineTo(p[0] - s * Math.cos(ang + 0.4), p[1] - s * Math.sin(ang + 0.4));
+  g.closePath(); g.fillStyle = "#FAF004"; g.fill();
+  g.beginPath(); g.arc(p[0], p[1], 4 * dpr, 0, 7);
+  g.strokeStyle = "#FFF"; g.lineWidth = 1.4 * dpr; g.stroke();
+}
+
+function loop(){ if (spin) rotY += 0.0032; drawScene(); requestAnimationFrame(loop); }
+
+/* --------------------------------------------------------------- strip -- */
+function drawStrip(){
+  const cv = $("strip"), g = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  g.clearRect(0, 0, w, h);
+  if (!trace.length || !A) return;
+  const peak = Math.max(1, ...A.sp);
+
+  g.fillStyle = "#FF8A0022";
+  for (const r of trace) if (r[5] & 1)
+    g.fillRect(r[0] / S.seconds * w, 0, Math.max(1, w / trace.length), h);
+
+  for (const f of A.flicks){
+    const x = f.t / S.seconds * w;
+    g.fillStyle = f.overshoot > 3 ? "#FF3B6B" : "#FAF004";
+    g.fillRect(x - 1, 0, 2, 9);
+  }
+
+  g.strokeStyle = "#2A2A20"; g.beginPath();
+  g.moveTo(0, h - 1); g.lineTo(w, h - 1); g.stroke();
+
+  g.strokeStyle = "#FAF004"; g.lineWidth = 1.2; g.beginPath();
+  trace.forEach((r, i) => {
+    const x = r[0] / S.seconds * w;
+    const y = h - (A.sp[i] / peak) * (h - 14) - 2;
+    i ? g.lineTo(x, y) : g.moveTo(x, y);
+  });
+  g.stroke();
+
+  g.fillStyle = "#8A8A72"; g.font = "9px ui-monospace,monospace";
+  g.fillText(Math.round(peak) + "°/s", 6, 22);
+  g.fillText("0", 6, h - 5);
+  g.fillStyle = "#FAF004"; g.fillText("▎flick", 60, 22);
+  g.fillStyle = "#FF3B6B"; g.fillText("▎overshoot", 110, 22);
+}
+
+/* --------------------------------------------------------- interaction -- */
+function sizeCanvases(){
+  const dpr = window.devicePixelRatio || 1;
+  for (const id of ["scene", "strip"]){
+    const cv = $(id);
+    const w = cv.clientWidth || 900;
+    cv.width = Math.max(1, Math.round(w * dpr));
+    cv.height = Math.round((id === "scene" ? 560 : 160) * dpr);
+  }
+}
+addEventListener("resize", () => { sizeCanvases(); drawStrip(); });
+if (window.ResizeObserver) new ResizeObserver(() => { sizeCanvases(); drawStrip(); }).observe($("strip"));
+
+const LABEL = {idle:"At rest", track:"Tracking", flick:"Flick",
+               fire:"Firing", over:"Overshoot"};
+
+function showTip(i, mx, my){
+  const tip = $("tip"), r = trace[i], c = A.cls[i];
+  const flick = A.flicks.find(f => i >= f.start && i <= f.end);
+  const notes = {
+    over:  "The crosshair went past the mark here and had to be pulled back. Repeated overshoot points at sensitivity set above your hand speed.",
+    flick: "A deliberate throw of the crosshair. What matters is how long it takes to settle after this.",
+    fire:  "Firing. Turn rate during a burst is the single best predictor of whether the shots land.",
+    track: "Steady tracking — following a target rather than throwing at one.",
+    idle:  "Crosshair effectively still: holding an angle.",
+  };
+  tip.innerHTML =
+    `<div class="k">${LABEL[c]}</div>` +
+    `<div class="r"><span>Time</span><b>${r[0].toFixed(1)}s</b></div>` +
+    `<div class="r"><span>Turn rate</span><b>${Math.round(A.sp[i])}°/s</b></div>` +
+    `<div class="r"><span>Yaw</span><b>${r[1] >= 0 ? "+" : ""}${Math.round(r[1])}°/s</b></div>` +
+    `<div class="r"><span>Pitch</span><b>${r[2] >= 0 ? "+" : ""}${Math.round(r[2])}°/s</b></div>` +
+    (flick ? `<div class="r"><span>Settle</span><b>${Math.round(flick.settle * 1000)}ms</b></div>` +
+             (flick.overshoot > 3 ? `<div class="r"><span>Overshoot</span><b>${flick.overshoot.toFixed(1)}°</b></div>` : "")
+           : "") +
+    `<div class="r"><span>State</span><b>${
+      [(r[5] & 1) ? "fire" : "", (r[5] & 2) ? "ads" : "", (r[5] & 4) ? "move" : ""]
+        .filter(Boolean).join(" · ") || "—"}</b></div>` +
+    `<div class="note">${notes[c]}</div>`;
+  const cv = $("scene");
+  tip.style.left = Math.min(mx + 16, cv.clientWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top  = Math.max(6, my - tip.offsetHeight - 14) + "px";
+  tip.classList.add("on");
+}
+
+(function orbit(){
+  const cv = $("scene"), tip = $("tip");
+  let down = false, lx = 0, ly = 0, shift = false, wasSpin = spin;
+
+  cv.addEventListener("pointerdown", e => {
+    down = true; lx = e.clientX; ly = e.clientY; shift = e.shiftKey;
+    spin = false; $("b-spin").classList.remove("on");
+    cv.setPointerCapture(e.pointerId);
+  });
+  cv.addEventListener("pointermove", e => {
+    const box = cv.getBoundingClientRect();
+    const mx = e.clientX - box.left, my = e.clientY - box.top;
+    if (down){
+      const dx = e.clientX - lx, dy = e.clientY - ly;
+      lx = e.clientX; ly = e.clientY;
+      if (shift){ panX += dx; panY += dy; } else { rotY += dx * .008; rotX += dy * .008; }
+      return;
+    }
+    // Hit-test against the last projected frame.
+    const sx = cv.width / box.width, sy = cv.height / box.height;
+    const px = mx * sx, py = my * sy;
+    let best = -1, bd = (18 * (window.devicePixelRatio || 1)) ** 2;
+    for (let i = 1; i < screenPts.length; i++){
+      const p = screenPts[i]; if (!p) continue;
+      const d = (p[0] - px) ** 2 + (p[1] - py) ** 2;
+      if (d < bd){ bd = d; best = i; }
+    }
+    hoverIdx = best;
+    if (best >= 0) showTip(best, mx, my); else tip.classList.remove("on");
+  });
+  const up = () => { down = false; };
+  cv.addEventListener("pointerup", up);
+  cv.addEventListener("pointercancel", up);
+  cv.addEventListener("pointerenter", () => { wasSpin = spin; spin = false; });
+  cv.addEventListener("pointerleave", () => {
+    hoverIdx = -1; tip.classList.remove("on");
+    if (wasSpin && $("b-spin").classList.contains("on")) spin = true;
+  });
+  cv.addEventListener("wheel", e => {
+    e.preventDefault();
+    zoom = Math.max(.25, Math.min(6, zoom * (e.deltaY < 0 ? 1.12 : .89)));
+  }, {passive:false});
+})();
+
+$("b-spin").addEventListener("click", e => { spin = !spin; e.target.classList.toggle("on", spin); });
+$("b-fire").addEventListener("click", e => { fireOnly = !fireOnly; e.target.classList.toggle("on", fireOnly); });
+$("b-flick").addEventListener("click", e => { flickOnly = !flickOnly; e.target.classList.toggle("on", flickOnly); });
+$("b-reset").addEventListener("click", () => { rotX = -.42; rotY = .62; zoom = 1; panX = panY = 0; });
+</script>
+</body>
+</html>

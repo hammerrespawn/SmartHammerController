@@ -1,0 +1,94 @@
+{
+  "id": "fortnite",
+  "game": "Fortnite",
+  "on": true,
+  "regions": [
+    {
+      "sx": 0.862,
+      "sy": 0.02,
+      "sw": 0.125,
+      "sh": 0.222,
+      "dx": 0.785,
+      "dy": 0.28,
+      "dw": 0.15,
+      "dh": 0.3297
+    },
+    {
+      "sx": 0.295,
+      "sy": 0.895,
+      "sw": 0.18,
+      "sh": 0.045,
+      "dx": 0.02,
+      "dy": 0.3,
+      "dw": 0.22,
+      "dh": 0.0681
+    },
+    {
+      "sx": 0.8,
+      "sy": 0.845,
+      "sw": 0.13,
+      "sh": 0.04,
+      "dx": 0.02,
+      "dy": 0.42,
+      "dw": 0.2,
+      "dh": 0.0762
+    }
+  ],
+  "rules": [],
+  "macros": [
+    {
+      "label": "WALL",
+      "keys": "z"
+    },
+    {
+      "label": "FLOOR",
+      "keys": "x"
+    },
+    {
+      "label": "RAMP",
+      "keys": "c"
+    },
+    {
+      "label": "ROOF",
+      "keys": "v"
+    },
+    {
+      "label": "EDIT",
+      "keys": "g"
+    },
+    {
+      "label": "PICK",
+      "keys": "f"
+    },
+    {
+      "label": "USE",
+      "keys": "e"
+    },
+    {
+      "label": "RELOAD",
+      "keys": "r"
+    },
+    {
+      "label": "JUMP",
+      "keys": "space"
+    },
+    {
+      "label": "CROUCH",
+      "keys": "ctrl"
+    }
+  ],
+  "enemy_tracking": {
+    "enabled": false,
+    "detector": "yolo",
+    "yolo_model": "yolov8n.pt",
+    "scan_hz": 2.0,
+    "max_width": 320,
+    "confidence": 0.15
+  },
+  "tuning": {
+    "sens_x": 14.0,
+    "sens_y": 14.0,
+    "ads_scale": 0.55
+  },
+  "_format": "gyroaim.profile.1"
+}

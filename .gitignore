@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------- private ----
+# This repository is public. Everything below is either personal to whoever ran
+# the agent, or too large to belong in git.
+
+# The live profile folder is never tracked. It holds cover art captured from
+# your own monitor, and alert rules embed small crops of your game screen -
+# neither belongs in a public repo. Shareable copies live in profiles.example/.
+profiles/
+
+# Recorded play sessions: your own telemetry, and they add up quickly.
+sessions/
+
+# Which profile you last had loaded, and the pre-multi-profile leftover.
+active.txt
+profile.json.bak
+
+# Logs can carry local addresses and profile names.
+*.log
+
+# The YOLO weights are ~6.5 MB and are fetched automatically on first use.
+yolov8n.pt
+Ultralytics/
+.yolo-config/
+.matplotlib/
+
+# Python and editor noise.
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Superseded archive of the original files.
+files.zip
+files/

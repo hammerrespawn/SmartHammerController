@@ -1,0 +1,84 @@
+{
+  "id": "arc-raiders",
+  "game": "ARC Raiders",
+  "on": true,
+  "regions": [
+    {
+      "sx": 0.7889112971629005,
+      "sy": 0.8285304330169382,
+      "sw": 0.20237704103401538,
+      "sh": 0.14667648450078455,
+      "dx": 0.3975242680023569,
+      "dy": 0.2958240348730598,
+      "dw": 0.18580092958088557,
+      "dh": 0.16234475821867886
+    },
+    {
+      "sx": 0.00989268774771286,
+      "sy": 0.8735377963925266,
+      "sw": 0.1881748049569132,
+      "sh": 0.09430108761864817,
+      "dx": 0.3950217737546062,
+      "dy": 0.13695500788296833,
+      "dw": 0.2,
+      "dh": 0.12083044096356156
+    }
+  ],
+  "rules": [],
+  "macros": [
+    {
+      "label": "HEAL",
+      "keys": "q"
+    },
+    {
+      "label": "NADE",
+      "keys": "g"
+    },
+    {
+      "label": "GADGET",
+      "keys": "4"
+    },
+    {
+      "label": "MELEE",
+      "keys": "3"
+    },
+    {
+      "label": "USE",
+      "keys": "e"
+    },
+    {
+      "label": "RELOAD",
+      "keys": "r"
+    },
+    {
+      "label": "JUMP",
+      "keys": "space"
+    },
+    {
+      "label": "ROLL",
+      "keys": "alt"
+    },
+    {
+      "label": "PEEK",
+      "keys": "x"
+    },
+    {
+      "label": "CROUCH",
+      "keys": "c"
+    }
+  ],
+  "enemy_tracking": {
+    "enabled": false,
+    "detector": "yolo",
+    "yolo_model": "yolov8n.pt",
+    "scan_hz": 2.0,
+    "max_width": 320,
+    "confidence": 0.15
+  },
+  "tuning": {
+    "sens_x": 14.0,
+    "sens_y": 14.0,
+    "ads_scale": 0.55
+  },
+  "_format": "gyroaim.profile.1"
+}

@@ -1,0 +1,4093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#0B1016">
+<title>GyroAim</title>
+<style>
+  /* ---------------------------------------------- Hammer Respawn theme ----
+     Electric Cyberpunk. The brand runs 65-75% electric yellow on marketing
+     art, but this is a tool held in the dark with your eyes on a monitor: a
+     yellow field would flare in peripheral vision and wash out the mirrored
+     HUD panels. So the distribution is inverted to the guide's sanctioned
+     "#FAF004 on black" variant - near-black ground, yellow as the signature
+     ink, cyan kept to its 5-10% as a distinct alert-and-mirror layer. */
+  :root{
+    --yellow:#FAF004;      /* primary - live state, aim, actions          */
+    --black:#050506;       /* ground                                      */
+    --cyan:#00E5FF;        /* accent - alerts, mirrored panels, indicators */
+    --cyan-mute:#49A1AC;   /* secondary technical lines                   */
+    --mustard:#C6C625;     /* low-contrast circuit paths and rules        */
+    --warm:#FF8A00;        /* warm warning light                          */
+
+    /* --amber is the historic name for the primary accent and is used
+       throughout; it now points at Electric Yellow. */
+    --amber:#FAF004;
+    --ink:#050506;
+    --panel:#0B0B0D;
+    --line:#23231A;
+    --ember:#FF8A00;
+    --mist:#8A8A72;
+    --mono:ui-monospace,"Roboto Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+
+    /* Angular everywhere: clipped corners instead of rounded ones. */
+    --notch:linear-gradient(#000 0 0);
+  }
+  /* Brand geometry - a notched corner, applied to panels and buttons. */
+  .notch{clip-path:polygon(0 0,calc(100% - 9px) 0,100% 9px,100% 100%,9px 100%,0 calc(100% - 9px))}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden}
+  body{
+    background:var(--ink);color:#EDEDE2;font-family:var(--sans);
+    user-select:none;-webkit-user-select:none;
+  }
+  .screen{position:fixed;inset:0;display:none;flex-direction:column}
+  .screen.on{display:flex}
+
+  /* touch-action is NOT overridden by a descendant - the browser intersects
+     the values up the ancestor chain, so `none` on body silently disabled
+     panning on every config screen and no amount of pan-y further down could
+     win. It lives on #live and the individual controls instead, which is
+     where a drag actually must not scroll anything. */
+  #setup,#library,#gamecfg,#rulecap{
+    touch-action:pan-y;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+
+  /* ---------------------------------------------------------- setup ---- */
+  /* No position:relative here. .screen sets position:fixed, and overriding it
+     made the element size to its content instead of the viewport - so it was
+     never a scroll container, just a 1231px box being clipped by an 812px
+     body. The scanline overlay is position:fixed and needs no positioned
+     ancestor anyway. */
+  #setup{overflow-y:auto;padding:calc(env(safe-area-inset-top) + 18px) 18px 28px}
+  /* Scan lines: brand texture, kept far below the threshold where it would
+     cost readability on a small screen. */
+  #setup::before,#gamecfg::before,#rulecap::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+    background:repeating-linear-gradient(
+      to bottom,#FAF00408 0 1px,transparent 1px 3px);
+  }
+  /* flex-shrink:0 matters as much as the z-index here. These screens are
+     column flex containers, so by default their children compress to fit
+     rather than overflowing - which means no scrollbar ever appears and the
+     content just gets squashed and clipped instead. */
+  #setup > *,#gamecfg > *,#rulecap > *{position:relative;z-index:2;flex-shrink:0}
+
+  /* Channel mark. HAMMER dominant, RESPAWN secondary, with a restrained cyan
+     offset standing in for the wordmark's glitch fragments. */
+  .chanmark{
+    font-family:var(--mono);font-weight:700;font-size:20px;line-height:1;
+    letter-spacing:.10em;color:var(--yellow);text-transform:uppercase;
+    text-shadow:2px 0 0 #00E5FF3D;
+  }
+  .chanmark span{
+    font-size:13px;letter-spacing:.30em;color:var(--mustard);
+    display:inline-block;margin-left:4px;vertical-align:2px;
+  }
+  .tagline{
+    font-family:var(--mono);font-size:9px;letter-spacing:.34em;
+    text-transform:uppercase;color:var(--cyan-mute);margin:5px 0 16px;
+  }
+  .brandbar{
+    border-left:2px solid var(--yellow);padding-left:10px;margin-bottom:16px;
+  }
+  /* Technical serial marks - part of the graphic vocabulary, and genuinely
+     useful for telling builds apart when reporting a problem. */
+  .serial{
+    font-family:var(--mono);font-size:8px;letter-spacing:.22em;
+    color:#3A3A2C;text-transform:uppercase;margin-top:20px;
+  }
+
+  .brand{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
+  .brand h1{
+    font-family:var(--mono);font-size:19px;font-weight:600;
+    letter-spacing:.22em;text-transform:uppercase;
+  }
+  .brand h1 span{color:var(--amber)}
+  .status{
+    font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+    text-transform:uppercase;color:var(--mist);margin-left:auto;
+  }
+  .status.live{color:var(--amber)}
+  .status.live::before{
+    content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+    background:var(--amber);margin-right:6px;vertical-align:1px;
+    animation:pulse 1.6s infinite;
+  }
+  @keyframes pulse{50%{opacity:.25}}
+  .sub{font-size:12px;color:var(--mist);margin-bottom:20px;line-height:1.5}
+
+  /* Signature: a live reticle. Aim the phone and watch it track — this is
+     how you confirm the axes and signs are right before you ever load a game. */
+  .scope{
+    position:relative;height:190px;border:1px solid var(--line);
+    background:
+      radial-gradient(circle at 50% 50%,#101008 0%,#060607 70%);
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));overflow:hidden;margin-bottom:6px;
+  }
+  .scope svg{position:absolute;inset:0;width:100%;height:100%}
+  .ticks{stroke:var(--line);stroke-width:1}
+  .cross{stroke:var(--amber);stroke-width:1.5;opacity:.9}
+  .readout{
+    display:flex;gap:18px;font-family:var(--mono);font-size:11px;
+    color:var(--mist);margin-bottom:22px;
+  }
+  .readout b{color:#EDEDE2;font-weight:500}
+
+  fieldset{border:0;margin-bottom:20px}
+  legend{
+    font-family:var(--mono);font-size:10px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--mist);
+    padding-bottom:9px;border-bottom:1px solid var(--line);
+    width:100%;margin-bottom:14px;
+  }
+  .row{display:flex;align-items:center;gap:14px;margin-bottom:15px}
+  .row label{font-size:13px;flex:0 0 96px;color:#B8B8A4}
+  .row output{
+    font-family:var(--mono);font-size:12px;color:var(--amber);
+    flex:0 0 46px;text-align:right;
+  }
+  input[type=range]{
+    flex:1;appearance:none;height:2px;background:var(--line);clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  input[type=range]::-webkit-slider-thumb{
+    appearance:none;width:22px;height:22px;border-radius:50%;
+    background:var(--amber);border:3px solid var(--ink);
+  }
+
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+    padding:9px 13px;border:1px solid var(--line);background:transparent;
+    color:var(--mist);clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));text-transform:uppercase;
+  }
+  .chip[aria-pressed=true]{
+    border-color:var(--amber);color:var(--amber);background:#FAF0040F;
+  }
+
+  .go{
+    width:100%;padding:19px;margin-top:6px;border:0;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+    background:var(--amber);color:var(--ink);
+    font-family:var(--mono);font-size:14px;font-weight:700;
+    letter-spacing:.2em;text-transform:uppercase;
+  }
+  .go:disabled{background:var(--line);color:var(--mist)}
+  .launches{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+  .launches .go{margin-top:0}
+  .rifle-go{
+    background:transparent;color:var(--amber);border:1px solid var(--amber);
+  }
+  .rifle-go:disabled{border-color:var(--line)}
+  .note{font-size:11px;color:var(--mist);margin-top:12px;line-height:1.6}
+
+  /* Configure opens a landscape-native command deck. The live gyro view and
+     the settings share the width instead of stacking into a phone-height
+     document, while launch and profile actions remain anchored at the bottom. */
+  #setup{
+    overflow:auto;padding:calc(env(safe-area-inset-top) + 8px)
+      calc(env(safe-area-inset-right) + 13px)
+      calc(env(safe-area-inset-bottom) + 8px)
+      calc(env(safe-area-inset-left) + 13px);
+    background:
+      radial-gradient(circle at 15% 25%,#00E5FF08,transparent 31%),
+      radial-gradient(circle at 82% -15%,#FAF0040D,transparent 38%),
+      linear-gradient(118deg,#050506,#080809);
+  }
+  #setup::after{
+    content:"";position:fixed;right:-12vw;top:-45vh;width:56vw;height:120vh;
+    border:1px solid #FAF0040C;transform:skewX(-17deg);pointer-events:none;z-index:1;
+  }
+  .setup-command{
+    display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;
+    gap:11px;min-height:46px;padding-bottom:7px;border-bottom:1px solid var(--line);
+  }
+  .setup-back{
+    height:32px;padding:0 11px;border:1px solid var(--line);background:#09090B;
+    color:var(--mist);font:700 8px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  .setup-back:active{border-color:var(--cyan);color:var(--cyan)}
+  .setup-cover{
+    width:55px;height:32px;border:1px solid #343428;background:#0B0B0D center/cover no-repeat;
+    position:relative;overflow:hidden;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .setup-cover::after{
+    content:"PROFILE";position:absolute;inset:0;display:grid;place-items:center;
+    color:#343428;font:6px/1 var(--mono);letter-spacing:.16em;
+    background:repeating-linear-gradient(45deg,#0D0D0F 0 5px,#09090B 5px 10px);
+  }
+  .setup-cover.has-cover::after{display:none}
+  .setup-title{min-width:0}
+  .setup-title small{
+    display:block;color:var(--cyan-mute);font:7px/1 var(--mono);
+    letter-spacing:.25em;text-transform:uppercase;margin-bottom:4px;
+  }
+  .setup-title h1{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:#EDEDE2;font:700 clamp(16px,3vw,24px)/.9 var(--mono);
+    letter-spacing:.10em;text-transform:uppercase;
+  }
+  .setup-title h1 span{color:var(--yellow)}
+  .setup-net{text-align:right}
+  .setup-net .status{display:block;margin:0 0 3px}
+  .setup-net small{
+    color:#48483A;font:7px/1 var(--mono);letter-spacing:.17em;text-transform:uppercase;
+  }
+  .setup-deck{
+    flex:1;min-height:0;display:grid;grid-template-columns:minmax(220px,.78fr) minmax(390px,1.42fr);
+    gap:9px;padding:8px 0;
+  }
+  .setup-panel{
+    min-width:0;min-height:0;border:1px solid var(--line);background:#08080A;
+    clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px));
+    overflow:hidden;
+  }
+  .setup-panel-head{
+    min-height:35px;display:flex;align-items:center;gap:9px;padding:7px 10px;
+    border-bottom:1px solid var(--line);background:#0C0C0E;
+  }
+  .setup-panel-head > span{
+    color:var(--yellow);font:700 8px/1 var(--mono);letter-spacing:.12em;
+  }
+  .setup-panel-head div{min-width:0}
+  .setup-panel-head b{
+    display:block;color:#DCDCCE;font:700 9px/1 var(--mono);
+    letter-spacing:.16em;text-transform:uppercase;
+  }
+  .setup-panel-head small{
+    display:block;color:#4E4E40;font:7px/1 var(--mono);
+    letter-spacing:.10em;text-transform:uppercase;margin-top:3px;
+  }
+  .setup-calibration{display:flex;flex-direction:column}
+  .setup-grip{
+    color:#666655;font:8px/1.4 var(--mono);letter-spacing:.05em;
+    padding:7px 10px 0;
+  }
+  #setup .scope{
+    flex:1;min-height:92px;height:auto;margin:7px 9px 5px;
+    border-color:#333326;background:
+      radial-gradient(circle at 50% 50%,#121209 0%,#070709 68%);
+  }
+  #setup .scope::after{
+    content:"LIVE VECTOR";position:absolute;right:8px;top:7px;
+    color:#49493A;font:6px/1 var(--mono);letter-spacing:.20em;
+  }
+  #setup .readout{
+    margin:0;padding:0 10px 7px;justify-content:space-between;gap:7px;
+    font-size:8px;letter-spacing:.05em;text-transform:uppercase;
+  }
+  #setup .readout b{color:var(--cyan);font-size:9px}
+  .setup-tuning{display:flex;flex-direction:column}
+  .tuning-grid{
+    flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:7px;
+    padding:7px 8px 5px;
+  }
+  #setup fieldset.tune-card{
+    min-width:0;margin:0;padding:9px 10px 4px;border:1px solid #202018;
+    background:#09090B;
+  }
+  #setup .tune-card legend{
+    color:var(--cyan-mute);font-size:8px;letter-spacing:.18em;
+    padding:0 0 7px;border-bottom:1px solid #202018;margin-bottom:7px;
+  }
+  #setup .row{gap:8px;margin-bottom:9px}
+  #setup .row label{
+    flex:0 0 67px;color:#93937F;font:8px/1.1 var(--mono);
+    letter-spacing:.06em;text-transform:uppercase;
+  }
+  #setup .row output{flex:0 0 31px;font-size:9px}
+  #setup .row input[type=range]{min-width:0;width:100%}
+  #setup input[type=range]::-webkit-slider-thumb{width:18px;height:18px}
+  .tune-note{
+    color:#49493D;font:7px/1.35 var(--mono);letter-spacing:.04em;margin-top:2px;
+  }
+  .setup-orientation{
+    display:flex;align-items:center;gap:8px;padding:0 8px 7px;
+  }
+  .setup-orientation > span{
+    color:#555546;font:7px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;
+    white-space:nowrap;
+  }
+  .setup-orientation .chips{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+  #setup .setup-orientation .chip{padding:7px 5px;font-size:7px;white-space:nowrap}
+  .setup-dock{
+    min-height:54px;display:grid;grid-template-columns:auto minmax(150px,1fr) minmax(300px,.9fr);
+    align-items:center;gap:9px;padding-top:7px;border-top:1px solid var(--line);
+  }
+  .setup-tools{display:flex;gap:5px}
+  #setup .setup-tools .chip{padding:8px 9px;font-size:7px}
+  #setup #game-btn{border-color:var(--cyan-mute);color:var(--cyan);background:#00E5FF09}
+  #enemy-toggle[aria-pressed="true"],#enemy-live-toggle[aria-pressed="true"]{
+    border-color:#FF3B30;color:#FFE27A;background:#45100EEB;
+    box-shadow:0 0 12px #FF3B3044;
+  }
+  .setup-feedback{min-width:0}
+  #setup #hint{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;
+    color:#686858;font:8px/1.2 var(--mono);letter-spacing:.04em;
+  }
+  .setup-feedback .serial{margin:4px 0 0;font-size:6px}
+  #setup .launches{margin:0;gap:6px}
+  #setup .launches .go{min-height:39px;padding:0 8px;font-size:9px;letter-spacing:.15em}
+
+  @media (max-height:360px){
+    #setup{padding-top:5px;padding-bottom:5px}
+    .setup-command{min-height:39px;padding-bottom:5px}
+    .setup-cover{height:28px;width:48px}
+    .setup-deck{padding:5px 0}
+    .setup-panel-head{min-height:30px;padding:5px 8px}
+    .setup-grip{display:none}
+    #setup .scope{margin-top:5px;min-height:77px}
+    .tuning-grid{padding-top:5px}
+    #setup fieldset.tune-card{padding-top:7px}
+    #setup .row{margin-bottom:7px}
+    .tune-note{display:none}
+    .setup-dock{min-height:45px;padding-top:5px}
+    #setup .launches .go{min-height:34px}
+  }
+  @media (max-width:680px){
+    .setup-command{grid-template-columns:auto auto 1fr auto;gap:7px}
+    .setup-net small{display:none}
+    .setup-deck{grid-template-columns:minmax(175px,.72fr) minmax(330px,1.28fr)}
+    .setup-grip{display:none}
+    .setup-dock{grid-template-columns:auto 1fr;gap:6px}
+    .setup-feedback{display:none}
+    #setup .setup-tools .chip{padding-inline:7px}
+    .setup-tools .tool-label{display:none}
+  }
+
+  /* --------------------------------------------------- orientation ---- */
+  /* The app is landscape-only. Every stored rectangle is a fraction of the
+     screen, so allowing two orientations meant a box marked in one came out
+     skewed in the other - the shapes were being locked against whichever
+     aspect happened to be current. One orientation, one aspect, no skew. */
+  #rotate{
+    position:fixed;inset:0;z-index:200;display:none;
+    background:var(--ink);color:#EDEDE2;padding:30px;
+    align-items:center;justify-content:center;text-align:center;
+  }
+  body.portrait #rotate{display:flex}
+  #rotate div{max-width:280px}
+  #rotate b{
+    display:block;font-family:var(--mono);font-size:15px;color:var(--amber);
+    letter-spacing:.18em;text-transform:uppercase;margin-bottom:10px;
+  }
+  #rotate p{font-size:13px;color:var(--mist);line-height:1.6}
+  #rotate .icon{font-size:40px;margin-bottom:16px;display:block}
+
+  /* ------------------------------------------------------- game HUD ---- */
+  #gamecfg{
+    overflow:hidden;padding:calc(env(safe-area-inset-top) + 7px)
+      calc(env(safe-area-inset-right) + 12px)
+      calc(env(safe-area-inset-bottom) + 7px)
+      calc(env(safe-area-inset-left) + 12px);
+    background:
+      radial-gradient(circle at 72% -25%,#00E5FF08,transparent 36%),
+      radial-gradient(circle at 14% 120%,#FAF00408,transparent 38%),
+      linear-gradient(118deg,#050506,#080809);
+  }
+  #gamecfg::after{
+    content:"";position:fixed;right:-13vw;top:-45vh;width:54vw;height:120vh;
+    border:1px solid #00E5FF0B;transform:skewX(-17deg);pointer-events:none;z-index:1;
+  }
+  .hud-command{
+    display:grid;grid-template-columns:auto auto minmax(180px,1fr) auto;
+    align-items:center;gap:10px;min-height:46px;padding-bottom:7px;
+    border-bottom:1px solid var(--line);
+  }
+  #game-back{
+    position:static;width:auto;height:31px;padding:0 10px;border:1px solid var(--line);
+    background:#09090B;color:var(--mist);font:700 8px/1 var(--mono);
+    letter-spacing:.14em;text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  #game-back:active{border-color:var(--cyan);color:var(--cyan)}
+  .hud-heading{min-width:0;padding-right:10px;border-right:1px solid var(--line)}
+  .hud-heading small{
+    display:block;color:var(--cyan-mute);font:7px/1 var(--mono);
+    letter-spacing:.22em;text-transform:uppercase;margin-bottom:4px;
+  }
+  .hud-heading h1{
+    font:700 clamp(15px,2.6vw,22px)/.9 var(--mono);letter-spacing:.10em;
+    text-transform:uppercase;white-space:nowrap;
+  }
+  .hud-heading h1 span{color:var(--yellow)}
+  .hud-profile{min-width:0;display:flex;align-items:center;gap:9px}
+  .hud-profile > span{
+    color:#555546;font:7px/1 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;white-space:nowrap;
+  }
+  #gamecfg .hud-profile input{
+    width:100%;height:31px;padding:6px 9px;font-size:10px;border-color:#303026;
+  }
+  .hud-telemetry{text-align:right;white-space:nowrap}
+  .hud-telemetry b{
+    display:block;color:var(--yellow);font:700 8px/1 var(--mono);
+    letter-spacing:.16em;text-transform:uppercase;
+  }
+  .hud-telemetry small{
+    display:block;color:#454538;font:6px/1 var(--mono);
+    letter-spacing:.14em;text-transform:uppercase;margin-top:4px;
+  }
+  input[type=text]{
+    flex:1;min-width:0;background:#0B0B0D;border:1px solid var(--line);
+    color:#EDEDE2;font-family:var(--mono);font-size:13px;padding:10px 11px;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  /* The snapshot is the reference frame for the box: everything is stored as
+     a fraction of it, so the phone never needs to know the monitor's pixel
+     size - which is just as well, since mss and Windows disagree about it. */
+  #shotwrap{
+    position:relative;border:1px solid var(--line);background:#0B0B0D;
+    line-height:0;touch-action:none;overflow:hidden;
+  }
+  #shot{width:100%;display:block;opacity:.75}
+  /* -------------------------------------------------------- library ---- */
+  /* The library is a landscape command deck: compact telemetry at the top,
+     a horizontal game roster in the middle, and the profile actions docked
+     below it. Native horizontal scrolling keeps the carousel responsive to a
+     thumb swipe while scroll-snap makes each game land with intent. */
+  #library{
+    overflow-y:auto;overflow-x:hidden;
+    padding:calc(env(safe-area-inset-top) + 10px)
+      calc(env(safe-area-inset-right) + 14px)
+      calc(env(safe-area-inset-bottom) + 12px)
+      calc(env(safe-area-inset-left) + 14px);
+    background:
+      radial-gradient(circle at 74% -20%,#FAF00410 0,transparent 38%),
+      linear-gradient(115deg,#050506 0 52%,#080809 100%);
+  }
+  #library::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+    background:
+      linear-gradient(90deg,transparent 49.8%,#FAF00408 50%,transparent 50.2%),
+      repeating-linear-gradient(to bottom,#FAF00408 0 1px,transparent 1px 4px);
+  }
+  #library::after{
+    content:"";position:fixed;right:-12vw;top:-42vh;width:60vw;height:118vh;
+    border:1px solid #FAF00410;transform:skewX(-18deg);pointer-events:none;z-index:1;
+    box-shadow:-44px 0 90px #FAF00405;
+  }
+  #library > *{position:relative;z-index:2;flex-shrink:0}
+
+  .lib-command{
+    display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px;
+    min-height:48px;padding:0 2px 8px;border-bottom:1px solid var(--line);
+  }
+  .lib-command .chanmark{font-size:16px;white-space:nowrap}
+  .lib-command .chanmark span{font-size:9px;letter-spacing:.25em}
+  .lib-heading{border-left:1px solid var(--line);padding-left:16px;min-width:0}
+  .lib-heading small{
+    display:block;color:var(--cyan-mute);font:8px/1 var(--mono);
+    letter-spacing:.26em;text-transform:uppercase;margin-bottom:4px;
+  }
+  .lib-heading h1{
+    font:700 clamp(17px,3.2vw,27px)/.9 var(--mono);letter-spacing:.12em;
+    text-transform:uppercase;white-space:nowrap;
+  }
+  .lib-heading h1 span{color:var(--yellow)}
+  .lib-net{text-align:right;min-width:92px}
+  .lib-net .status{display:block;margin:0 0 4px}
+  .lib-net small{
+    color:#4E4E40;font:8px/1 var(--mono);letter-spacing:.16em;
+    text-transform:uppercase;
+  }
+
+  /* Muted when sensors are fine, loud when they are not - the card should not
+     nag once the problem is solved. */
+  #flagcard{
+    border:1px solid var(--line);border-left:2px solid var(--line);
+    background:#08080A;margin:8px 0;padding:7px 10px;
+    clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));
+  }
+  #flagcard.bad{border-left-color:var(--warm);background:#140C02}
+  #flagcard.ok{border-left-color:var(--cyan)}
+  .flaghead{display:flex;align-items:center;gap:10px}
+  .flaghead b{
+    flex:1;min-width:0;font-family:var(--mono);font-size:11px;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--mist);
+  }
+  .flaghead .chip{padding:5px 9px;font-size:8px}
+  #flagcard.bad .flaghead b{color:var(--warm)}
+  #flagcard.ok  .flaghead b{color:var(--cyan-mute)}
+  #flagbody{display:none;margin-top:11px}
+  #flagbody.on{display:block}
+  .copyrow{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .copyrow code{
+    flex:1;min-width:0;overflow-x:auto;white-space:nowrap;
+    background:#050506;border:1px solid var(--line);padding:8px 9px;
+    font-family:var(--mono);font-size:10px;color:var(--yellow);
+  }
+
+  .lib-roster-head{
+    display:flex;align-items:end;gap:12px;margin:2px 2px 7px;
+  }
+  .lib-roster-title{min-width:0;flex:1}
+  .lib-roster-title small{
+    display:block;color:var(--yellow);font:8px/1 var(--mono);
+    letter-spacing:.28em;text-transform:uppercase;margin-bottom:4px;
+  }
+  .lib-roster-title b{
+    display:block;color:#EDEDE2;font:600 11px/1 var(--mono);
+    letter-spacing:.14em;text-transform:uppercase;
+  }
+  .lib-carousel-nav{display:flex;align-items:center;gap:6px}
+  .lib-arrow{
+    width:32px;height:25px;border:1px solid var(--line);background:#0B0B0D;
+    color:var(--mist);font:14px/1 var(--mono);
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .lib-arrow:disabled{opacity:.25}
+  .lib-arrow:not(:disabled):active{border-color:var(--yellow);color:var(--yellow)}
+  #lib-index{
+    min-width:49px;text-align:center;color:var(--cyan-mute);
+    font:9px/1 var(--mono);letter-spacing:.12em;
+  }
+  .lib-carousel-shell{position:relative;margin:0 -14px}
+  .lib-carousel-shell::before,.lib-carousel-shell::after{
+    content:"";position:absolute;top:0;bottom:0;width:28px;z-index:3;
+    pointer-events:none;
+  }
+  .lib-carousel-shell::before{left:0;background:linear-gradient(90deg,var(--black),transparent)}
+  .lib-carousel-shell::after{right:0;background:linear-gradient(-90deg,var(--black),transparent)}
+  #gamegrid{
+    display:flex;gap:12px;overflow-x:auto;overflow-y:hidden;
+    padding:2px max(34px,calc((100vw - min(78vw,680px))/2)) 8px;
+    scroll-snap-type:x mandatory;scroll-padding-inline:50%;
+    scrollbar-width:none;overscroll-behavior-x:contain;touch-action:pan-x;
+  }
+  #gamegrid::-webkit-scrollbar{display:none}
+
+  .gcard{
+    flex:0 0 min(78vw,680px);height:clamp(154px,43vh,218px);
+    display:grid;grid-template-columns:minmax(46%,1.18fr) minmax(210px,.82fr);
+    position:relative;border:1px solid var(--line);background:#08080A;
+    border-left:3px solid var(--line);overflow:hidden;scroll-snap-align:center;
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+    opacity:.46;transform:scale(.965);filter:saturate(.7);
+    transition:opacity .18s ease,transform .18s ease,border-color .18s linear,filter .18s ease;
+  }
+  .gcard.is-focus{opacity:1;transform:scale(1);filter:saturate(1)}
+  .gcard.active{border-left-color:var(--yellow)}
+  .gcard.is-focus{border-color:#49492A;border-left-color:var(--yellow)}
+  .gcover{
+    height:100%;background:#050506 center/cover no-repeat;
+    border-right:1px solid var(--line);position:relative;
+  }
+  .gcover::before{
+    content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,transparent 42%,#08080A 100%),
+      linear-gradient(0deg,#05050677,transparent 48%);
+  }
+  /* No cover yet: a technical placeholder rather than an empty grey box. */
+  .gcover.empty{
+    background-image:
+      repeating-linear-gradient(45deg,#0D0D0F 0 6px,#0A0A0C 6px 12px);
+  }
+  .gcover.empty::after{
+    content:"NO COVER";position:absolute;inset:0;display:flex;
+    align-items:center;justify-content:center;
+    font-family:var(--mono);font-size:9px;letter-spacing:.24em;color:#2A2A22;
+  }
+  .gmeta{
+    min-width:0;padding:16px 15px 13px;display:flex;flex-direction:column;
+    justify-content:center;position:relative;
+    background:linear-gradient(115deg,#08080A,#0D0D0E);
+  }
+  .gmeta::before{
+    content:"LOADOUT PROFILE";color:#484839;font:7px/1 var(--mono);
+    letter-spacing:.24em;margin-bottom:8px;
+  }
+  .gmeta b{
+    display:block;font-family:var(--mono);font-size:clamp(16px,2.6vw,25px);letter-spacing:.06em;
+    text-transform:uppercase;color:#EDEDE2;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .gmeta i{
+    font-style:normal;font-family:var(--mono);font-size:8px;
+    letter-spacing:.11em;text-transform:uppercase;color:#5D5D4E;margin-top:3px;
+  }
+  .gstats{display:flex;gap:6px;margin:12px 0 13px}
+  .gstat{
+    flex:1;min-width:0;border-top:1px solid var(--line);padding-top:6px;
+    color:var(--cyan-mute);font:7px/1.15 var(--mono);letter-spacing:.10em;
+    text-transform:uppercase;
+  }
+  .gstat strong{display:block;color:#D8D8CA;font-size:12px;margin-bottom:2px}
+  .gactions{display:grid;grid-template-columns:.72fr 1.28fr;gap:7px;margin-top:auto}
+  .gconfig,.glive{
+    min-height:34px;border:1px solid #343428;background:transparent;color:#A3A38D;
+    font:700 8px/1 var(--mono);letter-spacing:.15em;text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  .glive{background:var(--yellow);border-color:var(--yellow);color:var(--black)}
+  .gconfig:active{border-color:var(--cyan);color:var(--cyan)}
+  .glive:active{filter:brightness(.75)}
+  .activeflag{
+    position:absolute;left:0;top:0;z-index:2;background:var(--yellow);color:var(--black);
+    font-family:var(--mono);font-size:7px;font-weight:700;letter-spacing:.18em;padding:4px 8px;
+  }
+  .lib-dock{
+    display:flex;align-items:center;gap:8px;margin-top:6px;padding-top:7px;
+    border-top:1px solid var(--line);
+  }
+  .lib-dock .chip{padding:8px 12px}
+  .lib-hint{
+    margin-left:auto;color:#49493B;font:8px/1.2 var(--mono);
+    letter-spacing:.15em;text-transform:uppercase;text-align:right;
+  }
+  .lib-hint b{color:var(--cyan-mute);font-weight:500}
+  .lib-dock .serial{margin:0 0 0 7px;white-space:nowrap}
+  #gamegrid .emptystate{
+    flex:0 0 min(78vw,680px);height:clamp(154px,43vh,218px);
+    display:grid;place-items:center;border:1px dashed #343428;color:#5A5A48;
+    scroll-snap-align:center;
+  }
+
+  @media (max-height:390px){
+    #library{padding-top:6px;padding-bottom:7px}
+    .lib-command{min-height:40px;padding-bottom:5px}
+    .lib-command .chanmark{font-size:14px}
+    #flagcard{margin:5px 0;padding:5px 9px}
+    .gcard,#gamegrid .emptystate{height:clamp(142px,44vh,178px)}
+    .gmeta{padding:11px 12px 9px}
+    .gstats{margin:8px 0}
+    .gactions button{min-height:30px}
+    .lib-dock{margin-top:3px;padding-top:5px}
+  }
+  @media (max-width:680px){
+    .lib-command{gap:9px}
+    .lib-heading{padding-left:9px}
+    .lib-net small{display:none}
+    .gcard{flex-basis:84vw;grid-template-columns:44% 56%}
+    #gamegrid{padding-inline:max(28px,8vw)}
+    .lib-hint,.lib-dock .serial{display:none}
+  }
+
+  /* ------------------------------------------------ game HUD modules ---- */
+  .field{margin-bottom:16px}
+  .fieldlabel{
+    display:block;font-family:var(--mono);font-size:9px;letter-spacing:.26em;
+    text-transform:uppercase;color:var(--mist);margin-bottom:7px;
+  }
+  .field input[type=text]{width:100%}
+
+  /* Four operational modules share one landscape workspace. On compact phones
+     the same modules become a snap rail rather than being crushed into narrow
+     columns; a visible card edge teaches the swipe without extra instruction. */
+  .hud-grid{
+    flex:1;min-height:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:7px;padding:7px 0;overflow:hidden;
+  }
+  .mod{
+    border:1px solid var(--line);border-left:2px solid var(--yellow);
+    background:#08080A;margin:0;min-width:0;min-height:0;
+    display:flex;flex-direction:column;overflow:hidden;
+    clip-path:polygon(0 0,calc(100% - 11px) 0,100% 11px,100% 100%,11px 100%,0 calc(100% - 11px));
+  }
+  .mod.rules{border-left-color:var(--cyan)}
+  .mod.macros{border-left-color:var(--mustard)}
+  .modhead{
+    display:flex;align-items:center;gap:7px;min-height:40px;padding:7px 8px;
+    border-bottom:1px solid var(--line);
+  }
+  .modidx{
+    font-family:var(--mono);font-size:8px;font-weight:700;letter-spacing:.08em;
+    color:var(--yellow);border:1px solid #4A4A28;padding:3px 5px;
+  }
+  .modtitle{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .modtitle b{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.12em;
+    text-transform:uppercase;color:#EDEDE2;
+  }
+  .modtitle i{
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-style:normal;font-family:var(--mono);font-size:7px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--cyan-mute);
+  }
+  #gamecfg .modhead .chip{padding:6px 7px;font-size:7px;white-space:nowrap}
+  .modbody{
+    flex:1;min-height:0;padding:7px;overflow:auto;scrollbar-width:thin;
+    scrollbar-color:#4A4A28 #0B0B0D;
+  }
+  .modbody::-webkit-scrollbar{width:4px;height:4px}
+  .modbody::-webkit-scrollbar-track{background:#0B0B0D}
+  .modbody::-webkit-scrollbar-thumb{background:#4A4A28}
+  .modbody:empty{display:none}
+  .modfoot{
+    min-height:29px;color:#555546;font:7px/1.35 var(--mono);
+    padding:6px 8px;border-top:1px solid #1A1A14;
+  }
+  #gamecfg .preview .modbody{display:flex;overflow:hidden}
+  #gamecfg #shotanchor,#gamecfg #destanchor{display:none}
+  #gamecfg #shotwrap,#gamecfg #destwrap{flex:1;width:100%;height:100%;min-height:70px;margin:0}
+  #gamecfg #shot{width:100%;height:100%;object-fit:cover;opacity:.66}
+  #gamecfg #rulelist,#gamecfg #macrogrid{min-height:100%}
+  #gamecfg .rulerow{gap:6px;padding:7px 0}
+  #gamecfg .rulename{font-size:8px}
+  #gamecfg .rulescore{font-size:8px;min-width:25px}
+  #gamecfg .rulerow button{font-size:7px;padding:5px 6px}
+  #gamecfg #macrogrid{gap:5px}
+  #gamecfg .macrorow{gap:5px}
+  #gamecfg .macrorow span{font-size:7px;min-width:15px}
+  #gamecfg .macrorow input{font-size:8px;padding:6px 7px}
+  .chip.primary{
+    border-color:var(--yellow);color:var(--yellow);background:#FAF0040F;
+  }
+
+  /* Deployment stays visible while the modules scroll or snap independently. */
+  .savebar{
+    min-height:48px;display:flex;align-items:center;gap:10px;margin:0;
+    padding-top:7px;border-top:1px solid var(--line);background:transparent;
+  }
+  .save-note{flex:1;min-width:0}
+  .save-note b{
+    display:block;color:var(--cyan-mute);font:700 8px/1 var(--mono);
+    letter-spacing:.15em;text-transform:uppercase;
+  }
+  .save-note span{
+    display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:#4D4D40;font:7px/1 var(--mono);letter-spacing:.05em;margin-top:4px;
+  }
+  .savebar .go{width:min(300px,42vw);min-height:39px;padding:0 12px;margin:0;font-size:9px}
+
+  @media (max-height:360px){
+    #gamecfg{padding-top:5px;padding-bottom:5px}
+    .hud-command{min-height:39px;padding-bottom:5px}
+    .hud-grid{padding:5px 0}
+    .modhead{min-height:34px;padding:5px 7px}
+    .modfoot{min-height:24px;padding:4px 7px;font-size:6px}
+    .savebar{min-height:43px;padding-top:5px}
+    .savebar .go{min-height:34px}
+  }
+  @media (max-width:720px){
+    .hud-command{grid-template-columns:auto auto minmax(140px,1fr);gap:7px}
+    .hud-telemetry{display:none}
+    .hud-profile > span{display:none}
+    .hud-grid{
+      display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;
+      scroll-snap-type:x mandatory;scrollbar-width:none;touch-action:pan-x;
+      padding-inline:max(24px,8vw);
+    }
+    .hud-grid::-webkit-scrollbar{display:none}
+    .hud-grid .mod{flex:0 0 72vw;scroll-snap-align:center}
+    #gamecfg .mod.macros #macrogrid{display:grid;grid-template-columns:1fr 1fr;gap:5px 8px}
+    .save-note span{display:none}
+  }
+  @media (max-width:590px){
+    .hud-heading small{display:none}
+    .hud-heading h1{font-size:14px}
+    .save-note{display:none}
+    .savebar{justify-content:flex-end}
+    .savebar .go{width:min(300px,62vw)}
+  }
+
+  /* Full-screen editor. Landscape leaves almost no vertical room inline, so
+     each step gets the whole display when it is being worked on. The stage is
+     sized in JS to the largest rectangle of the right aspect that fits, so the
+     content fills its wrap exactly and the percentage-positioned boxes stay
+     aligned with what they mark. */
+  #editor{
+    position:fixed;inset:0;z-index:90;background:#050506;
+    display:none;flex-direction:column;
+  }
+  #editor.on{display:flex}
+  #editorstage{
+    flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+    padding:8px;
+  }
+  #editorbar{
+    display:flex;align-items:center;gap:8px;padding:10px 12px;
+    padding-bottom:calc(env(safe-area-inset-bottom) + 10px);
+    border-top:1px solid var(--line);
+  }
+  #ed-title{font-family:var(--mono);font-size:10px}
+  #editor #shot{height:100%;opacity:1}
+  #editor #shotwrap,#editor #destwrap{margin:0}
+  .mark .del{
+    position:absolute;right:-12px;top:-12px;width:26px;height:26px;
+    border-radius:50%;border:2px solid var(--ink);background:var(--ember);
+    color:var(--black);font-family:var(--mono);font-size:14px;line-height:22px;
+    text-align:center;padding:0;
+  }
+  /* A miniature of the controller screen, so panels can be placed without
+     having to go live and drag things over the real controls. */
+  #destwrap{
+    position:relative;border:1px solid var(--line);background:#050506;
+    touch-action:none;overflow:hidden;display:flex;
+  }
+  .destcol{
+    border-right:1px solid #23231A;display:flex;align-items:center;
+    justify-content:center;font-family:var(--mono);font-size:9px;
+    letter-spacing:.1em;color:#3A3A2C;text-transform:uppercase;
+  }
+  .destcol:last-child{border-right:0}
+  .mark{
+    position:absolute;border:2px solid;touch-action:none;cursor:move;
+  }
+  .mark .grip{
+    position:absolute;right:-12px;bottom:-12px;width:28px;height:28px;
+    border-radius:50%;border:2px solid var(--ink);
+  }
+  .mark .tag{
+    position:absolute;left:3px;top:2px;padding:0 5px;clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+    font-family:var(--mono);font-size:10px;color:var(--ink);
+  }
+
+  /* ---------------------------------------------------- rule capture ---- */
+  #rulecap{
+    overflow:hidden;padding:calc(env(safe-area-inset-top) + 7px)
+      calc(env(safe-area-inset-right) + 12px)
+      calc(env(safe-area-inset-bottom) + 7px)
+      calc(env(safe-area-inset-left) + 12px);
+    background:
+      radial-gradient(circle at 20% 115%,#FF8A000A,transparent 37%),
+      radial-gradient(circle at 82% -20%,#00E5FF09,transparent 35%),
+      linear-gradient(118deg,#050506,#080809);
+  }
+  .alert-command{
+    display:grid;grid-template-columns:auto auto 1fr auto;align-items:center;
+    gap:10px;min-height:46px;padding-bottom:7px;border-bottom:1px solid var(--line);
+  }
+  #rule-cancel{
+    position:static;width:auto;height:31px;padding:0 10px;border:1px solid var(--line);
+    background:#09090B;color:var(--mist);font:700 8px/1 var(--mono);
+    letter-spacing:.14em;text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  #rule-cancel:active{border-color:var(--warm);color:var(--warm)}
+  .alert-heading{padding-right:11px;border-right:1px solid var(--line)}
+  .alert-heading small{
+    display:block;color:var(--warm);font:7px/1 var(--mono);
+    letter-spacing:.23em;text-transform:uppercase;margin-bottom:4px;
+  }
+  .alert-heading h1{
+    font:700 clamp(15px,2.6vw,22px)/.9 var(--mono);letter-spacing:.10em;
+    text-transform:uppercase;white-space:nowrap;
+  }
+  .alert-heading h1 span{color:var(--yellow)}
+  .alert-flow{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+  .alert-flow span{
+    color:#4C4C3E;font:7px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+  }
+  .alert-flow span::before{
+    content:"";display:inline-block;width:5px;height:5px;margin-right:5px;
+    border:1px solid #555544;transform:rotate(45deg);vertical-align:0;
+  }
+  .alert-flow span.on{color:var(--cyan-mute)}
+  .alert-flow span.on::before{background:var(--cyan);border-color:var(--cyan)}
+  .alert-command > b{
+    color:var(--yellow);font:700 8px/1 var(--mono);letter-spacing:.15em;
+    text-transform:uppercase;white-space:nowrap;
+  }
+  #countdown{
+    display:none;align-items:center;justify-content:center;
+    position:fixed;inset:0;background:
+      radial-gradient(circle,#151507 0,transparent 32%),var(--ink);z-index:80;
+  }
+  #countdown.on{display:flex}
+  #countdown::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(to bottom,#FAF00408 0 1px,transparent 1px 4px);
+  }
+  .countframe{
+    width:min(330px,70vw);text-align:center;position:relative;padding:28px 20px;
+    border:1px solid #353526;
+    clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));
+  }
+  .countframe::before,.countframe::after{
+    content:"";position:absolute;top:50%;width:52px;height:1px;background:var(--yellow);
+  }
+  .countframe::before{right:100%}.countframe::after{left:100%}
+  .countframe small{
+    display:block;color:var(--cyan-mute);font:8px/1 var(--mono);
+    letter-spacing:.26em;text-transform:uppercase;
+  }
+  #countnum{
+    display:block;font-family:var(--mono);font-size:88px;line-height:1.05;
+    color:var(--yellow);font-weight:700;text-shadow:0 0 28px #FAF00422;
+  }
+  .countframe b{
+    display:block;color:#D8D8CB;font:700 10px/1 var(--mono);
+    letter-spacing:.19em;text-transform:uppercase;
+  }
+  .countframe p{color:#555547;font:8px/1.4 var(--mono);margin-top:8px}
+  #rulebody{display:none;flex:1;min-height:0}
+  #rulebody.on{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(255px,.75fr);gap:8px;padding-top:7px}
+  .alert-capture,.alert-config{
+    min-width:0;min-height:0;border:1px solid var(--line);background:#08080A;
+    clip-path:polygon(0 0,calc(100% - 10px) 0,100% 10px,100% 100%,10px 100%,0 calc(100% - 10px));
+    overflow:hidden;
+  }
+  .alert-capture{display:flex;flex-direction:column;border-left:2px solid var(--warm)}
+  .alert-panel-head{
+    min-height:39px;display:flex;align-items:center;gap:8px;padding:7px 9px;
+    border-bottom:1px solid var(--line);background:#0C0C0E;
+  }
+  .alert-panel-head > span{
+    color:var(--warm);font:700 8px/1 var(--mono);letter-spacing:.10em;
+  }
+  .alert-panel-head div{flex:1;min-width:0}
+  .alert-panel-head b{
+    display:block;color:#E1E1D4;font:700 9px/1 var(--mono);
+    letter-spacing:.14em;text-transform:uppercase;
+  }
+  .alert-panel-head small{
+    display:block;color:#515142;font:7px/1 var(--mono);
+    letter-spacing:.08em;text-transform:uppercase;margin-top:3px;
+  }
+  .alert-panel-head em{
+    color:var(--cyan-mute);font:normal 7px/1 var(--mono);
+    letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;
+  }
+  .alert-canvas{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:7px}
+  #capwrap{
+    width:100%;max-height:100%;aspect-ratio:16/9;position:relative;
+    border:1px solid #37372A;background:#0B0B0D;
+    line-height:0;touch-action:none;overflow:hidden;
+  }
+  #capshot{width:100%;height:100%;display:block;opacity:.72}
+  #capbox{
+    position:absolute;border:2px solid var(--warm);background:#FF8A0020;
+    box-shadow:0 0 0 1px #050506,0 0 18px #FF8A0018;touch-action:none;
+  }
+  #capbox::before{
+    content:"SIGNATURE";position:absolute;left:3px;top:3px;color:var(--warm);
+    font:6px/1 var(--mono);letter-spacing:.12em;
+  }
+  #capbox .grip{
+    position:absolute;right:-12px;bottom:-12px;width:28px;height:28px;
+    border-radius:50%;background:var(--warm);border:3px solid var(--ink);
+  }
+  .alert-config{display:flex;flex-direction:column;border-left:2px solid var(--cyan)}
+  .alert-fields{padding:8px 9px 6px}
+  .alert-field{display:block;margin-bottom:7px}
+  .alert-field > span{
+    display:block;color:#696958;font:7px/1 var(--mono);letter-spacing:.15em;
+    text-transform:uppercase;margin-bottom:4px;
+  }
+  #rulecap .alert-field input{
+    width:100%;height:31px;padding:6px 8px;background:#0B0B0D;
+    border:1px solid #292921;color:#E7E7DA;font:10px/1 var(--mono);
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  #rulecap .alert-field input:focus{outline:0;border-color:var(--cyan-mute)}
+  .alert-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .alert-preview{
+    margin:0 9px 7px;padding:8px;border:1px solid #2B2B22;background:#050506;
+  }
+  .alert-preview > small{
+    display:block;color:#4F4F40;font:6px/1 var(--mono);
+    letter-spacing:.18em;text-transform:uppercase;margin-bottom:6px;
+  }
+  .alert-preview-card{border-left:2px solid var(--cyan);padding:5px 7px;background:#00E5FF08}
+  .alert-preview-card b{
+    display:block;color:var(--yellow);font:700 9px/1 var(--mono);
+    letter-spacing:.12em;text-transform:uppercase;
+  }
+  .alert-preview-card span{
+    display:block;color:#92927F;font:8px/1.25 var(--mono);margin-top:4px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .alert-preview-meta{display:flex;gap:6px;margin-top:6px}
+  .alert-preview-meta i{
+    color:var(--cyan-mute);border:1px solid #24434A;padding:3px 5px;
+    font:normal 6px/1 var(--mono);letter-spacing:.10em;text-transform:uppercase;
+  }
+  .alert-form-note{
+    color:#505042;font:7px/1.35 var(--mono);padding:0 9px 6px;
+  }
+  #rulecap #rule-save{
+    width:auto;min-height:38px;margin:auto 9px 9px;padding:0 10px;font-size:9px;
+  }
+
+  @media (max-height:400px){
+    .alert-form-note{display:none}
+    .alert-fields{padding-bottom:4px}
+  }
+
+  @media (max-height:360px){
+    #rulecap{padding-top:5px;padding-bottom:5px}
+    .alert-command{min-height:39px;padding-bottom:5px}
+    #rulebody.on{padding-top:5px}
+    .alert-panel-head{min-height:33px;padding:5px 8px}
+    .alert-canvas{padding:5px}
+    .alert-fields{padding-top:6px}
+    .alert-field{margin-bottom:5px}
+    #rulecap .alert-field input{height:27px}
+    .alert-preview{padding:6px;margin-bottom:5px}
+    .alert-form-note{display:none}
+    #rulecap #rule-save{min-height:33px;margin-bottom:6px}
+  }
+  @media (max-width:650px){
+    .alert-command{grid-template-columns:auto auto 1fr;gap:7px}
+    .alert-command > b{display:none}
+    .alert-flow span{font-size:6px}
+    #rulebody.on{grid-template-columns:minmax(0,1.35fr) minmax(210px,.95fr)}
+    .alert-panel-head em{display:none}
+    .alert-preview{display:none}
+  }
+  .rulerow{
+    display:flex;align-items:center;gap:10px;padding:9px 0;
+    border-bottom:1px solid var(--line);font-size:13px;
+  }
+  .rulerow:last-child{border-bottom:0}
+  .rulemain{flex:1;min-width:0}
+  .rulename{
+    display:flex;align-items:center;gap:7px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.12em;
+    text-transform:uppercase;color:#EDEDE2;
+  }
+  .rulename em{
+    font-style:normal;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .keybadge{
+    font-family:var(--mono);font-size:9px;font-weight:700;
+    color:var(--black);background:var(--cyan);padding:2px 5px;
+  }
+  .dwellbadge{
+    font-family:var(--mono);font-size:9px;color:var(--mist);
+    border:1px solid var(--line);padding:2px 5px;
+  }
+  /* Live match strength, with a tick at the rule's threshold. Seeing the
+     headroom is what makes a threshold tunable - a bare number tells you it
+     matched but not how nearly it didn't. */
+  .meter{position:relative;height:4px;background:#17170F;margin-top:8px}
+  .meter i{
+    position:absolute;left:0;top:0;bottom:0;width:0;
+    background:var(--cyan-mute);transition:width .18s linear;
+  }
+  .meter i.hit{background:var(--cyan)}
+  .meter u{position:absolute;top:-3px;bottom:-3px;width:1px;background:var(--yellow)}
+  /* Sits directly under its meter so you set the threshold by watching the
+     bar, not by picking a number in the abstract. */
+  .rulethresh{
+    width:100%;margin-top:7px;height:2px;appearance:none;
+    background:#23231A;
+  }
+  .rulethresh::-webkit-slider-thumb{
+    appearance:none;width:16px;height:16px;border-radius:50%;
+    background:var(--yellow);border:3px solid var(--ink);
+  }
+  .rulescore{
+    font-family:var(--mono);font-size:11px;color:var(--mist);
+    min-width:34px;text-align:right;
+  }
+  .rulescore.hit{color:var(--cyan)}
+  .rulerow button{
+    background:transparent;border:1px solid var(--line);color:var(--mist);
+    font-family:var(--mono);font-size:9px;letter-spacing:.12em;padding:7px 8px;
+    text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  /* Ten slots, two per row: label and keys side by side so the pairing is
+     obvious without a heading over each column. */
+  #macrogrid{display:flex;flex-direction:column;gap:7px}
+  .macrorow{display:flex;align-items:center;gap:7px}
+  .macrorow span{
+    font-family:var(--mono);font-size:9px;color:#3A3A2C;
+    min-width:18px;text-align:right;
+  }
+  .macrorow input{
+    background:#0B0B0D;border:1px solid var(--line);color:#EDEDE2;
+    font-family:var(--mono);font-size:12px;padding:8px 9px;min-width:0;
+  }
+  .macrorow input.lbl{flex:0 0 34%}
+  .macrorow input.keys{flex:1}
+  .macrorow input:focus{outline:0;border-color:var(--yellow)}
+
+  .emptystate{
+    font-family:var(--mono);font-size:9px;letter-spacing:.18em;
+    text-transform:uppercase;color:#3A3A2C;text-align:center;
+    padding:16px 0;border:1px dashed var(--line);
+  }
+
+  /* ----------------------------------------------------------- live ---- */
+  /* A low-glare tactical surface: enough structure to find a control at a
+     glance, but dark enough to disappear from peripheral vision in play. */
+  /* touch-action on every interactive surface: without it Chrome can claim a
+     second finger for a scroll or pinch, which fires pointercancel and drops
+     whatever was being held. */
+  /* Three columns in landscape: movement | narrow utility strip | fire. */
+  #live{
+    background:
+      radial-gradient(circle at 20% 60%,#FAF0040A,transparent 32%),
+      radial-gradient(circle at 82% 50%,#FAF00408,transparent 34%),
+      #050506;
+    touch-action:none;flex-direction:row;isolation:isolate;overflow:hidden;
+  }
+  #live::before{
+    content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:
+      linear-gradient(90deg,transparent 49.8%,#FAF00408 50%,transparent 50.2%),
+      repeating-linear-gradient(0deg,#FAF00405 0 1px,transparent 1px 4px);
+  }
+  .zone{touch-action:none}
+
+  /* Section 1 - ADS fills the whole column, with the stick floating on top of
+     it. The wrapper around the stick is pointer-events:none, so every part of
+     the column that is not the stick itself still reaches ADS: there is no
+     dead margin, and the target is as large as the column. */
+  #z-move{
+    flex:1 1 42%;min-width:0;position:relative;z-index:1;
+    border-right:1px solid #27271C;
+    background:linear-gradient(145deg,#0C0C0E 0%,#070708 68%);
+  }
+  #z-move::after,#z-fire::after{
+    content:"";position:absolute;inset:10px;pointer-events:none;opacity:.55;
+    background:
+      linear-gradient(var(--mustard),var(--mustard)) left top/42px 1px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) left top/1px 28px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) right top/42px 1px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) right top/1px 28px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) left bottom/42px 1px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) left bottom/1px 28px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) right bottom/42px 1px no-repeat,
+      linear-gradient(var(--mustard),var(--mustard)) right bottom/1px 28px no-repeat;
+  }
+  #z-ads{position:absolute;inset:0;border-top:0;overflow:hidden}
+  .zone-copy{
+    position:absolute;left:24px;top:16%;z-index:2;pointer-events:none;
+    display:flex;flex-direction:column;text-transform:uppercase;
+    transition:opacity .45s ease,transform .06s linear;
+  }
+  .zone-copy small,.util-copy small{
+    color:var(--mustard);font:8px/1 var(--mono);letter-spacing:.22em;
+  }
+  .zone-copy b{
+    color:#D8D8C8;font:600 clamp(22px,5vw,42px)/.95 var(--mono);
+    letter-spacing:.12em;margin:5px 0 7px;
+  }
+  .zone-copy i,.util-copy i,.stick-label span{
+    color:#5F5F4C;font:8px/1.2 var(--mono);font-style:normal;letter-spacing:.16em;
+  }
+  #z-stickwrap{
+    position:absolute;left:0;right:0;top:34%;bottom:4px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:5px;
+    pointer-events:none;
+  }
+  #z-vpad{pointer-events:auto;z-index:3}
+  #z-vpad{
+    width:min(164px,38vh,76%);aspect-ratio:1;position:relative;
+    border-radius:50%;border:1px solid #40402D;
+    background:
+      radial-gradient(circle,#FAF0040C 0 8%,transparent 9% 42%,#FAF0040C 43% 44%,transparent 45%),
+      linear-gradient(90deg,transparent 49.5%,#7B7B591F 50%,transparent 50.5%),
+      linear-gradient(0deg,transparent 49.5%,#7B7B591F 50%,transparent 50.5%),
+      #0A0A0C;
+    touch-action:none;
+    box-shadow:inset 0 0 30px #000,0 0 0 7px #09090A,0 0 0 8px #1B1B15;
+    transition:border-color .06s linear,box-shadow .06s linear;
+  }
+  #z-vpad::before,#z-vpad::after{
+    content:"";position:absolute;inset:-8px;border-radius:50%;pointer-events:none;
+    border-top:1px solid var(--mustard);border-bottom:1px solid #343425;
+    transform:rotate(35deg);
+  }
+  #z-vpad::after{inset:13%;border:1px dashed #5F5F40;transform:none;opacity:.55}
+  #z-vpad.hit{
+    border-color:var(--yellow);
+    box-shadow:inset 0 0 32px #FAF00412,0 0 0 7px #10100C,0 0 0 9px #FAF00459;
+  }
+  /* Sized as a fraction of the base, so the stick scales with the column and
+     the travel maths can be derived from the rendered size rather than pinned
+     to a constant that would be wrong on another screen. */
+  #vknob{
+    position:absolute;left:50%;top:50%;width:40%;aspect-ratio:1;
+    border-radius:50%;border:1px solid var(--amber);
+    background:radial-gradient(circle at 36% 32%,#FAF00442,#1A1A0E 72%);
+    box-shadow:inset 0 0 0 4px #05050680,0 3px 12px #000;
+    transform:translate(-50%,-50%);pointer-events:none;
+  }
+  #z-vpad.hit #vknob{background:var(--yellow);box-shadow:0 0 18px #FAF00459}
+  .stick-label{
+    display:flex;align-items:baseline;gap:7px;pointer-events:none;
+    font-family:var(--mono);text-transform:uppercase;
+    transition:opacity .45s ease;
+  }
+  .stick-label b{color:var(--mustard);font-size:8px;letter-spacing:.22em}
+
+  /* Mirrored panels float over the whole controller screen. pointer-events is
+     none on the layer AND on each image, so nothing they cover can lose a
+     touch - the controls underneath keep working exactly as before. */
+  #hudlayer{
+    position:absolute;inset:0;pointer-events:none;z-index:4;display:none;
+  }
+  #hudlayer.on{display:block}
+  /* Macro strip: centred along the top edge, above the alerts. The strip
+     itself ignores touches - only the keys accept one - so the gaps between
+     macros pass straight through to whatever is underneath. */
+  #macrobar{
+    position:absolute;left:0;right:0;z-index:7;pointer-events:none;
+    top:calc(env(safe-area-inset-top) + 4px);
+    display:flex;justify-content:center;align-items:flex-start;gap:5px;
+    padding:0 62px;   /* clear of TUNE at the right edge */
+  }
+  .macro{
+    pointer-events:auto;background:#0B0B0DE6;border:1px solid var(--line);
+    border-top:2px solid var(--yellow);color:#EDEDE2;
+    font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;
+    text-transform:uppercase;padding:7px 0;min-width:38px;text-align:center;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .macro{transition:background .05s linear,color .05s linear}
+  .macro:active{
+    background:var(--yellow);color:var(--black);border-color:var(--yellow);
+    transform:translateY(1px);
+  }
+  .alert button:active{background:#7FF0FF;transform:translateY(1px)}
+  .go:active:not(:disabled){filter:brightness(.82)}
+  .chip:active{background:#FAF00426}
+
+  /* Alerts sit above the panels but below the macro strip. The strip ignores
+     touches so it cannot cost you a shot; only the buttons inside accept one. */
+  #alerts{
+    position:absolute;left:0;right:0;z-index:6;pointer-events:none;
+    top:calc(env(safe-area-inset-top) + 44px);
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+  }
+  /* Alerts live on the cyan layer. Yellow already means "this is live and
+     under your control"; making alerts cyan keeps machine-generated
+     information visually separate from your own inputs, and holds cyan to the
+     5-10% the brand allows. */
+  .alert{
+    display:flex;align-items:center;gap:10px;
+    background:#04181CEE;border:1px solid var(--cyan);
+    clip-path:polygon(0 0,calc(100% - 8px) 0,100% 8px,100% 100%,8px 100%,0 calc(100% - 8px));
+    padding:8px 12px;max-width:80%;
+  }
+  .alert b{
+    font-family:var(--mono);font-size:11px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--cyan);
+  }
+  .alert span{font-size:12px;color:#EDEDE2}
+  .alert button{
+    pointer-events:auto;background:var(--cyan);border:0;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+    color:var(--black);font-family:var(--mono);font-size:12px;font-weight:700;
+    padding:9px 14px;text-transform:uppercase;letter-spacing:.06em;
+  }
+  .alert.enemy-alert{
+    background:#100000F2;border:2px solid #FFE600;
+    box-shadow:0 0 24px #FF171780,0 0 0 1px #FFE60066 inset;
+    animation:enemy-alert-flash 1.2s steps(1,end) infinite;
+  }
+  .alert.enemy-alert b{
+    color:#FFE600;background:#090909E8;border:1px solid currentColor;
+    padding:3px 7px;text-transform:none;text-shadow:0 0 8px #000;
+    animation:enemy-alert-text 1.2s steps(1,end) infinite;
+  }
+  @keyframes enemy-alert-flash{
+    0%,34%,68%{background:#B00000F2;border-color:#FFE600;box-shadow:0 0 28px #FF1717AA,0 0 0 1px #FFE60099 inset}
+    17%,51%,85%{background:#FFE600F2;border-color:#FF1717;box-shadow:0 0 28px #FFE600AA,0 0 0 1px #FF171799 inset}
+    100%{background:#100000F2;border-color:#FFE600}
+  }
+  @keyframes enemy-alert-text{
+    0%,34%,68%,100%{color:#FFE600;background:#090909E8;border-color:#FFE600}
+    17%,51%,85%{color:#FFFFFF;background:#7A0000E8;border-color:#FFFFFF}
+  }
+
+  #enemy-warning{
+    position:fixed;inset:0;z-index:500;display:none;pointer-events:none;
+    align-items:center;justify-content:center;text-align:center;
+  }
+  #enemy-warning.flash{display:flex;animation:enemy-screen-flash 1.2s steps(1,end) 1}
+  #enemy-warning b{
+    padding:18px 28px;border:5px solid currentColor;background:#090909E8;
+    font:800 clamp(25px,7vw,62px)/1 var(--mono);letter-spacing:.14em;
+    text-transform:uppercase;box-shadow:0 0 45px currentColor;
+    animation:enemy-text-flash 1.2s steps(1,end) 1;
+  }
+  @keyframes enemy-screen-flash{
+    0%,34%,68%{background:#E51818B8;color:#FFE600}
+    17%,51%,85%{background:#FFD900B8;color:#D90000}
+    100%{background:transparent;color:transparent}
+  }
+  @keyframes enemy-text-flash{
+    0%,34%,68%{color:#FFE600;border-color:#FFE600}
+    17%,51%,85%{color:#FF1717;border-color:#FF1717}
+    100%{color:transparent;border-color:transparent}
+  }
+
+  /* contain, not fill: the placement editor already locks the panel to the
+     capture's shape, so this only ever matters as a guard against rounding -
+     and letterboxing a pixel is far better than smearing a minimap. */
+  #hudlayer img{
+    position:absolute;object-fit:contain;pointer-events:none;
+    border:1px solid var(--cyan-mute);background:#050506;
+    box-shadow:0 0 0 1px #00E5FF1A;
+  }
+
+  /* Section 2 - a narrow utility spine that remains easy to separate by feel. */
+  .zones{
+    flex:0 0 16%;min-width:0;display:flex;flex-direction:column;
+    position:relative;z-index:1;
+    border-right:1px solid #27271C;background:#09090A;
+  }
+  .zones::before{
+    content:"UTILITY";position:absolute;top:12px;left:50%;transform:translateX(-50%);
+    color:#4A4A38;font:7px/1 var(--mono);letter-spacing:.22em;z-index:2;
+    pointer-events:none;
+  }
+  .util-copy{
+    pointer-events:none;display:flex;flex-direction:column;align-items:center;
+    text-align:center;text-transform:uppercase;transition:opacity .45s ease;
+  }
+  .util-copy b{
+    color:#A6A692;font:600 clamp(9px,1.5vw,13px)/1 var(--mono);
+    letter-spacing:.08em;margin:7px 0 6px;
+  }
+  .util-glyph{
+    width:28px;height:28px;border:1px solid #343427;margin-bottom:9px;
+    display:grid;place-items:center;color:var(--mustard);font:13px/1 var(--mono);
+    transform:rotate(45deg);
+  }
+  .util-glyph span{transform:rotate(-45deg)}
+
+  /* Section 3 - mirrors the left column. Fire owns the whole column, the look
+     stick floats on top of it, and the two never share a touch: the stick
+     steers and does not fire, so holding fire steady can no longer drag your
+     aim with it. */
+  #z-firecol{
+    flex:1 1 42%;min-width:0;position:relative;z-index:1;
+    background:linear-gradient(215deg,#0C0C0E 0%,#070708 68%);
+  }
+  #z-fire{position:absolute;inset:0;border-top:0;overflow:hidden}
+  #z-fire::before{
+    content:"";position:absolute;width:min(46vw,330px);aspect-ratio:1;
+    left:50%;top:50%;transform:translate(-50%,-50%);border-radius:50%;
+    border:1px solid #25251C;box-shadow:0 0 0 22px #09090A,0 0 0 23px #191913;
+    pointer-events:none;transition:border-color .06s linear,box-shadow .06s linear;
+  }
+  /* Same geometry as the movement stick, so both thumbs learn one shape. */
+  #z-lookwrap{
+    position:absolute;left:0;right:0;top:34%;bottom:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;pointer-events:none;z-index:2;
+  }
+  #z-lookwrap.off{display:none}
+  #z-look{
+    pointer-events:auto;touch-action:none;
+    width:min(150px,86%);aspect-ratio:1;position:relative;border-radius:50%;
+    border:1px solid #454530;background:#0A0A0CCC;
+    box-shadow:inset 0 0 30px #000,0 0 0 7px #080809,0 0 0 8px #242419;
+    transition:border-color .06s linear,box-shadow .06s linear;
+  }
+  #z-look.hit{border-color:var(--yellow);box-shadow:inset 0 0 22px #FAF0041F,0 0 0 7px #11110B,0 0 0 9px var(--yellow)}
+  #lknob{
+    position:absolute;left:50%;top:50%;width:40%;aspect-ratio:1;
+    border-radius:50%;border:1px solid var(--yellow);background:#FAF00426;
+    transform:translate(-50%,-50%);pointer-events:none;
+  }
+  #z-look.hit #lknob{background:#FAF0043D}
+  .swipe-rail{
+    position:absolute;right:18px;top:50%;transform:translateY(-50%);z-index:2;
+    display:grid;justify-items:center;gap:6px;color:#50503E;
+    font:7px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+    pointer-events:none;transition:opacity .45s ease;
+  }
+  .swipe-rail i{color:var(--mustard);font:normal 18px/1 var(--mono)}
+  .swipe-rail span{writing-mode:vertical-rl;letter-spacing:.24em;color:#737352}
+  .zone{
+    flex:1;position:relative;display:flex;
+    align-items:center;justify-content:center;
+    border-top:1px solid #27271C;
+  }
+  .zone:first-child{border-top:0}
+  #live.settled .zone-copy,#live.settled .swipe-rail,
+  #live.settled .stick-label,#live.settled .live-footer{opacity:.34}
+  #live.settled .util-copy{opacity:.65}
+  /* Pressed state: a yellow wash plus an inset edge, so it reads in peripheral
+     vision without you looking down. Transitions are short - anything slower
+     than ~60ms stops feeling like a button and starts feeling like lag. */
+  .zone{transition:background .06s linear,box-shadow .06s linear}
+  .zone.hit{background:#FAF0041F;box-shadow:inset 0 0 0 2px var(--yellow)}
+  .zone.hit .zone-copy,.zone.hit .util-copy,.zone.hit .swipe-rail{opacity:1 !important}
+  .zone.hit .zone-copy b,.zone.hit .util-copy b{color:var(--yellow)}
+  #z-fire.hit::before{border-color:var(--yellow);box-shadow:0 0 0 22px #11110B,0 0 24px #FAF00442}
+  .live-footer{
+    position:absolute;left:12px;right:12px;bottom:7px;z-index:3;
+    display:flex;align-items:center;justify-content:space-between;pointer-events:none;
+    color:#464635;font:7px/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;
+    transition:opacity .45s ease;
+  }
+  .live-footer span:first-child{color:var(--cyan-mute)}
+  .live-footer i{
+    display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:6px;
+    background:var(--cyan);box-shadow:0 0 8px #00E5FF;animation:pulse 1.6s infinite;
+  }
+  /* ------------------------------------------------------- action feedback --
+     You are looking at the monitor, not at this screen, so the primary signal
+     goes to the edges where peripheral vision catches it without you glancing
+     down. The alternation runs at ~6 Hz: fast enough to read as "sustained",
+     well clear of the 15-25 Hz band that causes photosensitive problems, and
+     done with opacity on a stacked layer rather than by animating colour, so
+     it costs the compositor nothing. */
+  #actionfx{position:absolute;inset:0;pointer-events:none;z-index:5;overflow:hidden}
+  .fx-edge{position:absolute;opacity:0;transition:opacity .09s linear}
+  .fx-left {left:0;top:0;bottom:0;width:7px;background:linear-gradient(to right,var(--yellow),transparent)}
+  .fx-right{right:0;top:0;bottom:0;width:7px;background:linear-gradient(to left,var(--warm),transparent)}
+  .fx-right::after{
+    content:"";position:absolute;inset:0;opacity:0;
+    background:linear-gradient(to left,var(--yellow),transparent);
+  }
+  .fx-top{left:0;right:0;top:0;height:5px;background:linear-gradient(to bottom,var(--cyan),transparent)}
+
+  #live.adsing  .fx-left {opacity:.95}
+  #live.looking .fx-top  {opacity:.75}
+  #live.firing  .fx-right{opacity:1}
+  #live.firing  .fx-right::after{animation:fxAlt .16s steps(1) infinite}
+  #live.firing  #z-fire::before{animation:fxRing .16s steps(1) infinite}
+  @keyframes fxAlt{0%,49%{opacity:0}50%,100%{opacity:1}}
+  @keyframes fxRing{
+    0%,49%  {border-color:var(--warm);  box-shadow:0 0 0 22px #150A02,0 0 26px #FF8A0066}
+    50%,100%{border-color:var(--yellow);box-shadow:0 0 0 22px #11110B,0 0 26px #FAF00466}
+  }
+
+  /* Freeze is a mode you can forget you are holding, and while you hold it the
+     gyro does nothing - so it gets an unmissable banner rather than a tint. */
+  #fx-frozen{
+    position:absolute;left:50%;top:calc(env(safe-area-inset-top) + 46px);
+    transform:translateX(-50%);opacity:0;transition:opacity .1s linear;
+    background:#04181CEE;border:1px solid var(--cyan);color:var(--cyan);
+    font:700 10px/1 var(--mono);letter-spacing:.26em;text-transform:uppercase;
+    padding:8px 14px;
+    clip-path:polygon(0 0,calc(100% - 7px) 0,100% 7px,100% 100%,7px 100%,0 calc(100% - 7px));
+  }
+  #live.frozen #fx-frozen{opacity:1;animation:fxBreathe 1s ease-in-out infinite}
+  @keyframes fxBreathe{50%{opacity:.45}}
+
+  /* A compact ledger of what is currently held, for the glance you do take. */
+  #fx-state{
+    position:absolute;left:50%;bottom:6px;transform:translateX(-50%);
+    display:flex;gap:5px;
+  }
+  #fx-state b{
+    font:700 8px/1 var(--mono);letter-spacing:.2em;text-transform:uppercase;
+    padding:4px 7px;background:var(--yellow);color:var(--black);
+  }
+  #fx-state b.cool{background:var(--cyan)}
+  #fx-state b.warm{background:var(--warm)}
+
+  .exit{
+    position:absolute;top:calc(env(safe-area-inset-top) + 7px);right:9px;
+    font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:#A5A58C;
+    background:#0B0B0DEB;border:1px solid #343425;border-left:2px solid var(--yellow);
+    padding:8px 12px;z-index:8;text-transform:uppercase;
+    clip-path:polygon(0 0,calc(100% - 6px) 0,100% 6px,100% 100%,6px 100%,0 calc(100% - 6px));
+  }
+  .exit:active{background:var(--yellow);color:var(--black)}
+  #enemy-live-toggle{
+    position:absolute;top:calc(env(safe-area-inset-top) + 7px);left:9px;z-index:8;
+    padding:8px 11px;font:9px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;
+    color:#777765;background:#0B0B0DEB;border:1px solid #343425;
+  }
+  @media (max-width:680px){
+    #z-move{flex-basis:40%}.zones{flex-basis:18%}#z-firecol{flex-basis:42%}
+    .zone-copy{left:17px;top:17%}.swipe-rail{right:10px}
+    .live-footer{display:none}
+  }
+  @media (max-height:340px){
+    .zone-copy{top:14%}.zone-copy i,.stick-label span{display:none}
+    #z-stickwrap,#z-lookwrap{top:31%;bottom:2px}.swipe-rail b{display:none}
+    .util-copy i{display:none}.util-glyph{margin-bottom:5px;width:24px;height:24px}
+  }
+  /* Mirrored to the top-left so it is findable by feel in a rifle grip,
+     where the screen faces away from you. */
+  .exit.left{right:auto;left:8px;color:#FAF004}
+
+  /* --------------------------------------------------------- rifle ---- */
+  #rifle{
+    background:#050506;align-items:center;justify-content:center;
+    padding:calc(env(safe-area-inset-top) + 42px) 24px
+      calc(env(safe-area-inset-bottom) + 24px);
+  }
+  .rifle-stage{width:min(520px,100%);text-align:center}
+  .rifle-kicker{
+    color:var(--amber);font:600 11px/1 var(--mono);letter-spacing:.24em;
+    text-transform:uppercase;margin-bottom:14px;
+  }
+  .rifle-scope{
+    width:min(250px,62vw);aspect-ratio:1;margin:0 auto 18px;
+    position:relative;border:1px solid var(--line);border-radius:50%;
+    background:radial-gradient(circle,#0D0D0F 0 2px,#07070A 3px 48%,#0E0E11 49% 50%,#08080A 51%);
+  }
+  .rifle-scope::before,.rifle-scope::after{
+    content:"";position:absolute;background:var(--line);left:50%;top:50%;
+    transform:translate(-50%,-50%);
+  }
+  .rifle-scope::before{width:100%;height:1px}
+  .rifle-scope::after{width:1px;height:100%}
+  #rifle-cross{
+    position:absolute;left:50%;top:50%;width:28px;height:28px;
+    margin:-14px 0 0 -14px;border:1px solid var(--amber);border-radius:50%;
+    box-shadow:0 0 14px #FAF00455;transition:transform 40ms linear;
+  }
+  #rifle-cross::before,#rifle-cross::after{
+    content:"";position:absolute;background:var(--amber);left:50%;top:50%;
+    transform:translate(-50%,-50%);
+  }
+  #rifle-cross::before{width:38px;height:1px}
+  #rifle-cross::after{width:1px;height:38px}
+  .rifle-state{
+    min-height:42px;color:#B8B8A4;font:12px/1.55 var(--mono);
+    letter-spacing:.04em;
+  }
+  .rifle-state.ready{color:#00E5FF}
+  .rifle-state.warn{color:var(--ember)}
+  .rifle-readout{
+    display:flex;justify-content:center;gap:24px;margin:12px 0 18px;
+    color:var(--mist);font:11px/1 var(--mono);
+  }
+  .rifle-readout b{color:#EDEDE2;font-weight:500}
+  .rifle-grip{
+    max-width:430px;margin:0 auto 18px;color:var(--mist);
+    font-size:12px;line-height:1.6;
+  }
+  .rifle-action{cursor:pointer}
+</style>
+</head>
+<body>
+
+<div id="rotate">
+  <div>
+    <span class="icon">⟳</span>
+    <b>Turn sideways</b>
+    <p>GyroAim runs in landscape only. Every marked region is stored relative to
+       the screen, so a single fixed orientation is what keeps them the right
+       shape.</p>
+  </div>
+</div>
+
+<!-- ============================================================== library -->
+<section id="library" class="screen on">
+  <header class="lib-command">
+    <div class="chanmark">Hammer<span>Respawn</span></div>
+    <div class="lib-heading">
+      <small>Profile command / GyroAim</small>
+      <h1>Game <span>Library</span></h1>
+    </div>
+    <div class="lib-net">
+      <div class="status" id="lib-status">offline</div>
+      <small id="lib-count">0 profiles</small>
+    </div>
+  </header>
+
+  <!-- Sensor gate. Chrome refuses to expose motion sensors on a plain-HTTP
+       origin, and says nothing about it - so surface the fix here rather than
+       leaving a dead controller to explain itself. -->
+  <div id="flagcard">
+    <div class="flaghead">
+      <b id="flagtitle">Checking sensors…</b>
+      <button class="chip" id="flagtoggle">details</button>
+    </div>
+    <div id="flagbody">
+      <p class="note" style="margin:0 0 10px">Chrome will not give a page motion sensors over plain HTTP. It can't be opened from here — Chrome blocks pages from reaching <b>chrome://</b> URLs — so copy each line and paste it into the address bar yourself.</p>
+      <div class="copyrow">
+        <code id="flagurl">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+        <button class="chip" data-copy="flagurl">copy</button>
+      </div>
+      <div class="copyrow">
+        <code id="flagorigin">—</code>
+        <button class="chip" data-copy="flagorigin">copy</button>
+      </div>
+      <p class="note" style="margin:10px 0 0">Paste the first into the address bar, put the second in that flag's box, set it to <b>Enabled</b>, then <b>Relaunch</b>. Reopen this page afterwards.</p>
+    </div>
+  </div>
+
+  <div class="lib-roster-head">
+    <div class="lib-roster-title">
+      <small>Mission roster</small>
+      <b>Select a combat profile</b>
+    </div>
+    <nav class="lib-carousel-nav" aria-label="Game carousel controls">
+      <button class="lib-arrow" id="lib-prev" aria-label="Previous game">←</button>
+      <span id="lib-index" aria-live="polite">00 / 00</span>
+      <button class="lib-arrow" id="lib-next" aria-label="Next game">→</button>
+    </nav>
+  </div>
+
+  <div class="lib-carousel-shell">
+    <div id="gamegrid" role="list" aria-label="Game profiles"></div>
+  </div>
+
+  <footer class="lib-dock">
+    <button class="chip primary" id="lib-new">+ New game</button>
+    <button class="chip" id="lib-import">↓ Import</button>
+    <button class="chip" id="lib-sessions">◷ Past games</button>
+    <input type="file" id="lib-file" accept=".json,application/json" hidden>
+    <div class="lib-hint"><b>Swipe</b> to browse · Deploy goes straight to controls</div>
+    <p class="serial">UNIT 01 · HR-CTRL-0x01</p>
+  </footer>
+</section>
+
+<!-- ============================================================= sessions -->
+<section id="sessions" class="screen">
+  <div class="brand">
+    <h1>Past<span>Games</span></h1>
+    <button class="exit" id="sess-back">BACK</button>
+  </div>
+  <p class="sub">Every run is recorded from Go live until you leave the controller. Open the analysis on a desktop browser to see the full breakdown.</p>
+  <div id="sesslist"></div>
+  <p class="note" id="sess-url"></p>
+  <p class="serial">TELEMETRY · BETA</p>
+</section>
+
+<!-- ================================================================ setup -->
+<section id="setup" class="screen">
+  <header class="setup-command">
+    <button class="setup-back" id="to-library">← Roster</button>
+    <div class="setup-cover" id="setup-cover" aria-hidden="true"></div>
+    <div class="setup-title">
+      <small>Active combat profile</small>
+      <h1 id="setup-game">Gyro<span>Aim</span></h1>
+    </div>
+    <div class="setup-net">
+      <div class="status" id="status">offline</div>
+      <small>Configuration uplink</small>
+    </div>
+  </header>
+
+  <main class="setup-deck">
+    <section class="setup-panel setup-calibration">
+      <header class="setup-panel-head">
+        <span>01</span>
+        <div><b>Live aim calibration</b><small>Verify direction and response</small></div>
+      </header>
+      <p class="setup-grip">Screen up · top edge forward · tilt for pitch · rotate for yaw</p>
+      <div class="scope">
+        <svg viewBox="0 0 300 190" preserveAspectRatio="xMidYMid slice">
+          <g class="ticks">
+            <line x1="150" y1="0" x2="150" y2="190" stroke-dasharray="2 6"/>
+            <line x1="0" y1="95" x2="300" y2="95" stroke-dasharray="2 6"/>
+            <circle cx="150" cy="95" r="52" fill="none"/>
+            <circle cx="150" cy="95" r="86" fill="none"/>
+          </g>
+          <g class="cross" id="reticle">
+            <line x1="150" y1="80" x2="150" y2="90"/>
+            <line x1="150" y1="100" x2="150" y2="110"/>
+            <line x1="135" y1="95" x2="145" y2="95"/>
+            <line x1="155" y1="95" x2="165" y2="95"/>
+            <circle cx="150" cy="95" r="1.6" fill="currentColor" stroke="none"/>
+          </g>
+        </svg>
+      </div>
+      <div class="readout">
+        <div>Yaw <b id="r-yaw">0.0</b>°/s</div>
+        <div>Pitch <b id="r-pitch">0.0</b>°/s</div>
+        <div>Rate <b id="r-hz">0</b> Hz</div>
+      </div>
+    </section>
+
+    <section class="setup-panel setup-tuning">
+      <header class="setup-panel-head">
+        <span>02</span>
+        <div><b>Aim tuning</b><small>Changes save to this profile</small></div>
+      </header>
+      <div class="tuning-grid">
+        <fieldset class="tune-card">
+          <legend>Sensitivity</legend>
+          <div class="row">
+            <label for="sx">Horizontal</label>
+            <input type="range" id="sx" min="0" max="45" step="0.5" value="14">
+            <output id="sx-v">14</output>
+          </div>
+          <div class="row">
+            <label for="sy">Vertical</label>
+            <input type="range" id="sy" min="0" max="45" step="0.5" value="14">
+            <output id="sy-v">14</output>
+          </div>
+          <div class="row">
+            <label for="ads">Scoped</label>
+            <input type="range" id="ads" min="0.2" max="1.2" step="0.05" value="0.55">
+            <output id="ads-v">0.55</output>
+          </div>
+          <p class="tune-note">Pixels per degree, with a separate multiplier while ADS is held.</p>
+        </fieldset>
+
+        <fieldset class="tune-card">
+          <legend>Response filter</legend>
+          <div class="row">
+            <label for="dz">Deadzone</label>
+            <input type="range" id="dz" min="0" max="4" step="0.1" value="0.8">
+            <output id="dz-v">0.8</output>
+          </div>
+          <div class="row">
+            <label for="sm">Smoothing</label>
+            <input type="range" id="sm" min="0" max="0.85" step="0.05" value="0.3">
+            <output id="sm-v">0.30</output>
+          </div>
+          <div class="row">
+            <label for="hz">Sensor rate</label>
+            <input type="range" id="hz" min="60" max="240" step="10" value="60">
+            <output id="hz-v">60</output>
+          </div>
+          <div class="row">
+            <label for="look">Look stick</label>
+            <input type="range" id="look" min="0" max="500" step="10" value="220">
+            <output id="look-v">220</output>
+          </div>
+          <p class="tune-note">Above 60 Hz enables the high-rate sensor path when supported.</p>
+        </fieldset>
+      </div>
+
+      <div class="setup-orientation">
+        <span>Orientation</span>
+        <div class="chips">
+          <button class="chip" id="inv-x" aria-pressed="false">Flip X</button>
+          <button class="chip" id="inv-y" aria-pressed="false">Flip Y</button>
+          <button class="chip" id="aim-accel" aria-pressed="true">Aim accel</button>
+          <button class="chip" id="haptics" aria-pressed="true">Haptics</button>
+          <button class="chip" id="look-on" aria-pressed="true">Look stick</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="setup-dock">
+    <div class="setup-tools">
+      <button class="chip" id="cover-grab">◉ <span class="tool-label">Cover</span></button>
+      <button class="chip" id="prof-export">↑ <span class="tool-label">Export</span></button>
+      <button class="chip" id="prof-delete">✕ <span class="tool-label">Delete</span></button>
+      <button class="chip" id="game-btn">▦ <span class="tool-label">HUD setup</span></button>
+      <button class="chip" id="enemy-toggle" aria-pressed="false">◎ <span class="tool-label">Enemy scan</span></button>
+    </div>
+    <div class="setup-feedback">
+      <p id="hint">Connecting to the PC agent…</p>
+      <p class="serial">GYROAIM · UNIT 01 · HR-CTRL-0x01</p>
+    </div>
+    <div class="launches">
+      <button class="go" id="go" disabled>▶ Go live</button>
+      <button class="go rifle-go" id="rifle-go" disabled>⌖ Rifle aim</button>
+    </div>
+  </footer>
+</section>
+
+<!-- ============================================================ game HUD -->
+<section id="gamecfg" class="screen">
+  <header class="hud-command">
+    <button id="game-back">← Tuning</button>
+    <div class="hud-heading">
+      <small>Controller systems</small>
+      <h1>Game <span>HUD</span></h1>
+    </div>
+    <label class="hud-profile" for="game-name">
+      <span>Profile</span>
+      <input id="game-name" type="text" placeholder="Call of Duty: Modern Warfare"
+             autocomplete="off" spellcheck="false">
+    </label>
+    <div class="hud-telemetry">
+      <b>04 Modules online</b>
+      <small>Mirror · detect · command</small>
+    </div>
+  </header>
+
+  <!-- Every system stays live in one landscape workspace. The two visual
+       mappers still expand into the existing full-screen precision editor. -->
+  <main class="hud-grid">
+    <section class="mod preview capture">
+      <header class="modhead">
+        <span class="modidx">01</span>
+        <div class="modtitle">
+          <b>Screen capture</b>
+          <i id="src-status">—</i>
+        </div>
+        <button class="chip primary" id="expand-src">⤢ Edit</button>
+      </header>
+      <div class="modbody">
+        <div id="shotanchor"></div>
+        <div id="shotwrap"><img id="shot" alt="Desktop capture preview"></div>
+      </div>
+      <footer class="modfoot">Mark up to three regions from the PC display.</footer>
+    </section>
+
+    <section class="mod preview placement">
+      <header class="modhead">
+        <span class="modidx">02</span>
+        <div class="modtitle">
+          <b>Panel placement</b>
+          <i id="dest-status">—</i>
+        </div>
+        <button class="chip primary" id="expand-dest">⤢ Edit</button>
+      </header>
+      <div class="modbody">
+        <div id="destanchor"></div>
+        <div id="destwrap"></div>
+      </div>
+      <footer class="modfoot">Position mirrored panels over the live controller.</footer>
+    </section>
+
+    <section class="mod rules">
+      <header class="modhead">
+        <span class="modidx">03</span>
+        <div class="modtitle">
+          <b>Visual alerts</b>
+          <i id="rule-status">—</i>
+        </div>
+        <button class="chip primary" id="rule-add">+ Add</button>
+      </header>
+      <div class="modbody">
+        <div id="rulelist"></div>
+        <p class="note" id="rule-note" style="margin-top:10px"></p>
+      </div>
+      <footer class="modfoot">Watch captured states and surface action prompts. <b>test</b> measures the live match while the state is on screen and sets the threshold from it.</footer>
+    </section>
+
+    <section class="mod macros">
+      <header class="modhead">
+        <span class="modidx">04</span>
+        <div class="modtitle">
+          <b>Command macros</b>
+          <i id="macro-status">—</i>
+        </div>
+      </header>
+      <div class="modbody">
+        <div id="macrogrid"></div>
+      </div>
+      <footer class="modfoot">Bind labels to a key or sequence such as <b>3,r</b>.</footer>
+    </section>
+  </main>
+
+  <footer class="savebar">
+    <div class="save-note">
+      <b>Profile pipeline ready</b>
+      <span>Saving deploys this HUD, alert set, macro bank, and controller layout.</span>
+    </div>
+    <button class="go" id="game-save">▶ Save &amp; deploy</button>
+  </footer>
+</section>
+
+<!-- ============================================================== editor -->
+<!-- One overlay serves both steps: the real #shotwrap / #destwrap are moved
+     into it and back out again, so the boxes and their drag handlers are the
+     same objects either way and nothing has to be kept in sync. -->
+<div id="editor">
+  <div id="editorstage"></div>
+  <div id="editorbar">
+    <span class="status" id="ed-title" style="margin:0 auto 0 4px"></span>
+    <button class="chip" id="ed-add">+ Box</button>
+    <button class="chip" id="ed-del">− Last</button>
+    <button class="go" id="ed-done" style="width:auto;padding:13px 26px;margin:0">Save</button>
+  </div>
+</div>
+
+<!-- ========================================================= rule capture -->
+<section id="rulecap" class="screen">
+  <header class="alert-command">
+    <button id="rule-cancel">← HUD deck</button>
+    <div class="alert-heading">
+      <small>Visual intelligence</small>
+      <h1>New <span>Alert</span></h1>
+    </div>
+    <div class="alert-flow" aria-label="Alert creation stages">
+      <span class="on">Capture</span>
+      <span class="on">Target</span>
+      <span>Action</span>
+    </div>
+    <b>Signature builder</b>
+  </header>
+
+  <div id="countdown" aria-live="assertive">
+    <div class="countframe">
+      <small>Screen acquisition</small>
+      <span id="countnum">3</span>
+      <b>Hold target state</b>
+      <p>Keep the game on the exact visual cue you want the PC to detect.</p>
+    </div>
+  </div>
+
+  <div id="rulebody">
+    <section class="alert-capture">
+      <header class="alert-panel-head">
+        <span>01</span>
+        <div><b>Target signature</b><small>Box the visual state that triggers this alert</small></div>
+        <em>Drag · Resize corner</em>
+      </header>
+      <div class="alert-canvas">
+        <div id="capwrap">
+          <img id="capshot" alt="Captured game screen">
+          <div id="capbox"><div class="grip"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="alert-config">
+      <header class="alert-panel-head">
+        <span>02</span>
+        <div><b>Alert payload</b><small>What appears on the controller</small></div>
+      </header>
+      <div class="alert-fields">
+        <label class="alert-field" for="rule-name">
+          <span>Alert name</span>
+          <input id="rule-name" type="text" placeholder="LOW AMMO" autocomplete="off">
+        </label>
+        <label class="alert-field" for="rule-msg">
+          <span>Operator message</span>
+          <input id="rule-msg" type="text" placeholder="Reload now" autocomplete="off">
+        </label>
+        <div class="alert-field-grid">
+          <label class="alert-field" for="rule-key">
+            <span>Action key</span>
+            <input id="rule-key" type="text" placeholder="r" maxlength="1" autocomplete="off">
+          </label>
+          <label class="alert-field" for="rule-dwell">
+            <span>Minimum dwell</span>
+            <input id="rule-dwell" type="number" min="0.5" max="60" step="0.5" value="3">
+          </label>
+        </div>
+      </div>
+
+      <div class="alert-preview">
+        <small>Controller preview</small>
+        <div class="alert-preview-card">
+          <b id="alert-preview-name">LOW AMMO</b>
+          <span id="alert-preview-msg">Reload now</span>
+        </div>
+        <div class="alert-preview-meta">
+          <i id="alert-preview-key">Key · none</i>
+          <i id="alert-preview-dwell">Min · 3s</i>
+        </div>
+      </div>
+      <p class="alert-form-note">Leave the action key blank for information-only alerts. Dwell is the minimum time the message remains readable.</p>
+      <button class="go" id="rule-save">◆ Arm alert</button>
+    </aside>
+  </div>
+</section>
+
+<!-- ================================================================= live -->
+<section id="live" class="screen">
+  <button class="exit" id="exit">TUNE</button>
+  <button id="enemy-live-toggle" aria-pressed="false">Enemy scan off</button>
+  <div id="z-move">
+    <div class="zone" id="z-ads">
+      <div class="zone-copy">
+        <small>01 / Hold zone</small>
+        <b>ADS</b>
+        <i>Aim down sight</i>
+      </div>
+    </div>
+    <div id="z-stickwrap">
+      <div id="z-vpad"><div id="vknob"></div></div>
+      <div class="stick-label"><b>Move</b><span>Vector control</span></div>
+    </div>
+  </div>
+  <div class="zones">
+    <div class="zone" id="z-freeze">
+      <div class="util-copy">
+        <div class="util-glyph"><span>Ⅱ</span></div>
+        <small>Hold</small><b>Freeze</b><i>Gyro lock</i>
+      </div>
+    </div>
+    <div class="zone" id="z-center">
+      <div class="util-copy">
+        <div class="util-glyph"><span>⌖</span></div>
+        <small>Tap</small><b>Centre</b><i>Zero aim</i>
+      </div>
+    </div>
+  </div>
+  <div id="z-firecol">
+    <div class="zone" id="z-fire">
+      <div class="zone-copy">
+        <small>02 / Hold zone</small>
+        <b>Fire</b>
+        <i>Hold anywhere</i>
+      </div>
+      <div class="swipe-rail">
+        <i>↑</i><b>Primary</b><span>Swipe</span><b>Secondary</b><i>↓</i>
+      </div>
+    </div>
+    <div id="z-lookwrap">
+      <div id="z-look"><div id="lknob"></div></div>
+      <div class="stick-label"><b>Look</b><span>Aim vector</span></div>
+    </div>
+  </div>
+  <div class="live-footer" aria-hidden="true">
+    <span><i></i>Gyro link / online</span>
+    <span>HR-CTRL-01 · Combat control</span>
+    <span>Landscape / Multi-touch armed</span>
+  </div>
+  <div id="actionfx" aria-hidden="true">
+    <i class="fx-edge fx-left"></i>
+    <i class="fx-edge fx-right"></i>
+    <i class="fx-edge fx-top"></i>
+    <div id="fx-frozen">Aim frozen</div>
+    <div id="fx-state"></div>
+  </div>
+  <div id="hudlayer"></div>
+  <div id="macrobar"></div>
+  <div id="alerts"></div>
+</section>
+
+<div id="enemy-warning" role="alert" aria-live="assertive">
+  <b>Enemy detected</b>
+</div>
+
+<!-- =============================================================== rifle -->
+<section id="rifle" class="screen">
+  <button class="exit" id="rifle-exit">TUNE</button>
+  <div class="rifle-stage">
+    <div class="rifle-kicker">Rifle aim</div>
+    <div class="rifle-scope" aria-hidden="true">
+      <div id="rifle-cross"></div>
+    </div>
+    <div class="rifle-state" id="rifle-state">Preparing sensors…</div>
+    <div class="rifle-readout">
+      <div>yaw <b id="rifle-yaw">0.0</b>°/s</div>
+      <div>pitch <b id="rifle-pitch">0.0</b>°/s</div>
+      <div>rate <b id="rifle-hz">0</b> Hz</div>
+    </div>
+    <p class="rifle-grip">Top edge away, charging port toward you, display facing left. Hold completely still while calibration runs; then swing the barrel to aim.</p>
+    <button class="chip rifle-action" id="rifle-recal">Recalibrate</button>
+  </div>
+</section>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+
+/* ------------------------------------------------------------- config -- */
+const cfg = {
+  deadzone: 0.8,   // deg/s below this is treated as hand tremor
+  smooth:   0.30,  // exponential smoothing, 0 = raw
+  invX:     false,
+  invY:     false,
+  haptics:  true,    // vibration feedback on button and stick transitions
+  sensorHz: 60,      // 60 = devicemotion; above switches to the Generic Sensor API
+
+  /* Look stick, on the trigger. Deflection sets a turn rate that is added to
+     whatever the gyro is contributing - they bank into the same pending
+     degrees, so the two combine rather than fighting. Vertical is deliberately
+     slower: you traverse far more than you elevate. */
+  lookOn:    true,   // show the look stick at all
+  lookSpeed: 220,    // deg/s of yaw at full deflection
+  lookPitchRatio: 0.7,
+  lookDead: 0.10,
+
+  /* Aim acceleration: sensitivity rises with turn speed, so a slow deliberate
+     movement stays 1:1 and precise while a fast flick is multiplied. */
+  gyroAccel:   true,
+  accelKnee:   60,   // deg/s at which the boost reaches full
+  accelAmount: 1.5,  // extra multiplier at and above the knee
+
+  /* Left-thumb movement stick, mapped to WASD. Two thresholds, not one: a key
+     engages at moveOn and only releases once you fall back to moveOff, so a
+     thumb hovering on the boundary cannot rattle the key on and off. */
+  moveOn:      0.45, // deflection at which a direction key goes down
+  moveOff:     0.30, // and the lower level at which it lets go
+};
+
+/* Controller grip: the phone lies flat in two hands, screen up, pointing away
+   from you along its top edge - so that edge is the barrel. Measured, not
+   assumed: with the phone flat, 94% of gravity runs along the screen normal,
+   which makes the out-of-the-back axis [0,0,-1] nearly anti-parallel to "up".
+   The barrel projection then collapses (|flat| ~ 0.24) and tilting produces
+   almost no pitch at all, just leak into yaw. Top-edge-forward stays fully
+   conditioned (|flat| ~ 1.00) in the same pose. */
+const BARREL = [0, 1, 0];
+
+/* Rifle mode is deliberately isolated from the standard touch controller.
+   It shares only the final aim packets and the tuning sliders. No fire, ADS,
+   movement, or touch-zone state is entered while this mode is active. */
+const RIFLE_CAL_MS = 1100;
+const RIFLE_STILL_RATE = 8;       // deg/s: samples above this are not "still"
+const RIFLE_MIN_SAMPLES = 20;
+let aimMode = "standard";
+let rifleBias = [0, 0, 0];
+let rifleCal = null;
+let rifleCalTimer = null;
+let rifleReady = false;
+let rifleSmYaw = 0, rifleSmPitch = 0;
+let riflePX = 0, riflePY = 0;
+
+/* ------------------------------------------------------------- socket -- */
+const wsURL = `ws://${location.hostname}:8001`;
+let ws = null, connected = false;
+
+function connect(){
+  ws = new WebSocket(wsURL);
+  ws.onopen = () => {
+    connected = true;
+    for (const id of ["status", "lib-status"]){
+      $(id).textContent = "connected";
+      $(id).classList.add("live");
+    }
+    $("go").disabled = false;
+    $("rifle-go").disabled = false;
+    $("hint").textContent = "Choose Go live for full controls or Rifle aim for aim only.";
+    if (aimMode === "rifle" && rifleReady)
+      setRifleState("Calibrated · aiming is live", "ready");
+    pushConfig();
+  };
+  ws.onclose = () => {
+    connected = false;
+    for (const id of ["status", "lib-status"]){
+      $(id).textContent = "offline";
+      $(id).classList.remove("live");
+    }
+    $("go").disabled = true;
+    $("rifle-go").disabled = true;
+    $("hint").textContent = "Lost the PC agent. Retrying…";
+    if (aimMode === "rifle"){
+      pendYaw = 0; pendPitch = 0;
+      setRifleState("Connection lost · waiting for the PC agent", "warn");
+    }
+    setTimeout(connect, 1200);
+  };
+  ws.onmessage = ev => {
+    try { onServerMessage(JSON.parse(ev.data)); } catch {}
+  };
+  ws.onerror = () => ws.close();
+}
+const send = obj => { if (connected) ws.send(JSON.stringify(obj)); };
+
+function pushConfig(){
+  send({t:"cfg", v:{
+    sens_x: parseFloat($("sx").value),
+    sens_y: parseFloat($("sy").value),
+    ads_scale: parseFloat($("ads").value),
+  }});
+}
+
+/* ------------------------------------------------------ enemy tracking -- */
+let enemyEnabled = false;
+let enemyAvailable = null;
+let enemyFlashTimer = null;
+
+function renderEnemyControls(){
+  const setup = $("enemy-toggle"), live = $("enemy-live-toggle");
+  for (const el of [setup, live]){
+    el.setAttribute("aria-pressed", String(enemyEnabled));
+    el.disabled = enemyAvailable === false;
+  }
+  setup.innerHTML = enemyAvailable === false
+    ? '◎ <span class="tool-label">Scan unavailable</span>'
+    : `◎ <span class="tool-label">Enemy scan ${enemyEnabled ? "on" : "off"}</span>`;
+  live.textContent = enemyAvailable === false
+    ? "Enemy scan unavailable" : `Enemy scan ${enemyEnabled ? "on" : "off"}`;
+}
+
+function applyEnemyTracking(profile){
+  enemyEnabled = Boolean(profile?.enemy_tracking?.enabled);
+  renderEnemyControls();
+}
+
+function setEnemyTracking(enabled){
+  if (enabled && enemyAvailable === false) return;
+  enemyEnabled = Boolean(enabled);
+  renderEnemyControls();
+  send({t:"enemy_tracking", enabled:enemyEnabled});
+  haptic("tap");
+}
+
+function flashEnemyWarning(){
+  const warning = $("enemy-warning");
+  warning.classList.remove("flash");
+  void warning.offsetWidth;                 // restart even during a repeat alert
+  warning.classList.add("flash");
+  clearTimeout(enemyFlashTimer);
+  enemyFlashTimer = setTimeout(() => warning.classList.remove("flash"), 1250);
+  haptic("enemy");
+}
+
+$("enemy-toggle").addEventListener("click", () => setEnemyTracking(!enemyEnabled));
+$("enemy-live-toggle").addEventListener("click", e => {
+  e.stopPropagation();
+  setEnemyTracking(!enemyEnabled);
+});
+renderEnemyControls();
+
+/* --------------------------------------------------------- aim math ---- */
+/* Rate-based, not orientation-based: we read angular velocity and convert it
+   straight into mouse deltas. Nothing is ever integrated into an absolute
+   heading, so gyro drift simply cannot accumulate.
+
+   The axes are resolved in world space using gravity, so the aim behaves the
+   same no matter how the phone is rolled around its barrel axis. */
+
+const dot = (a,b) => a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const norm = v => { const m = Math.hypot(...v); return m > 1e-6 ? v.map(c=>c/m) : null; };
+
+let gravity = null;               // low-passed, device frame; null until first read
+let lastRight = [1,0,0];          // fallback if the barrel points straight up
+let smYaw = 0, smPitch = 0;       // smoothed rates
+let pendYaw = 0, pendPitch = 0;   // degrees banked since the last packet
+let samples = 0, lastT = 0, lastHz = 0;
+let motionSeen = false;           // proves the sensor is actually delivering
+let lastMotionT = 0;              // for real elapsed time instead of an assumed rate
+let lastUp = [0,0,1];             // world up, device frame
+/* Held-freeze: the phone accumulates real rotation as you turn, so eventually
+   it sits at an awkward angle. Freeze suspends aim while you rotate it back to
+   neutral - the gyro equivalent of lifting a mouse off the pad. Without it
+   there is no way to recover a comfortable hold mid-fight. */
+let frozen = false;
+
+function setRifleState(text, kind=""){
+  const el = $("rifle-state");
+  el.textContent = text;
+  el.className = "rifle-state" + (kind ? " " + kind : "");
+}
+
+function resetAimPipeline(){
+  smYaw = smPitch = 0;
+  rifleSmYaw = rifleSmPitch = 0;
+  pendYaw = pendPitch = 0;
+  lastMotionT = 0;
+  gravity = null;                 // take the new grip's first reading as-is
+  lastRight = [1,0,0];
+}
+
+function beginRifleCalibration(){
+  if (aimMode !== "rifle") return;
+  clearTimeout(rifleCalTimer);
+  rifleReady = false;
+  rifleBias = [0,0,0];
+  rifleCal = {sum:[0,0,0], count:0, seen:0};
+  pendYaw = pendPitch = 0;
+  rifleSmYaw = rifleSmPitch = 0;
+  setRifleState("Calibrating · hold the rifle completely still");
+
+  rifleCalTimer = setTimeout(() => {
+    if (aimMode !== "rifle" || !rifleCal) return;
+    if (rifleCal.seen === 0){
+      rifleCal = null;
+      setRifleState("No motion sensor data · checking again…", "warn");
+      rifleCalTimer = setTimeout(beginRifleCalibration, 650);
+      return;
+    }
+    if (rifleCal.count < RIFLE_MIN_SAMPLES){
+      rifleCal = null;
+      setRifleState("Too much movement · hold still, retrying…", "warn");
+      rifleCalTimer = setTimeout(beginRifleCalibration, 650);
+      return;
+    }
+    rifleBias = rifleCal.sum.map(v => v / rifleCal.count);
+    rifleCal = null;
+    rifleReady = true;
+    setRifleState(connected
+      ? "Calibrated · aiming is live"
+      : "Calibrated · waiting for the PC agent", connected ? "ready" : "warn");
+  }, RIFLE_CAL_MS);
+}
+
+function paintRifle(yaw, pitch){
+  riflePX = Math.max(-90, Math.min(90, riflePX * 0.88 - yaw * 0.35));
+  riflePY = Math.max(-90, Math.min(90, riflePY * 0.88 - pitch * 0.35));
+  $("rifle-cross").style.transform =
+    `translate(${riflePX.toFixed(1)}px,${riflePY.toFixed(1)}px)`;
+  $("rifle-yaw").textContent = yaw.toFixed(1);
+  $("rifle-pitch").textContent = pitch.toFixed(1);
+  $("rifle-hz").textContent = lastHz;
+}
+
+function processRifleMotion(rawW, up, right, dt){
+  if (rifleCal){
+    rifleCal.seen++;
+    if (Math.hypot(...rawW) <= RIFLE_STILL_RATE){
+      for (let i=0; i<3; i++) rifleCal.sum[i] += rawW[i];
+      rifleCal.count++;
+    }
+    paintRifle(0, 0);
+    return;
+  }
+  if (!rifleReady) return;
+
+  const w = rawW.map((v,i) => v - rifleBias[i]);
+  // World vertical gives yaw. BARREL × up gives the horizontal pitch axis.
+  // The third (barrel/roll) component is intentionally discarded.
+  let yaw = dot(w, up);
+  let pitch = dot(w, right);
+
+  const mag = Math.hypot(yaw, pitch);
+  if (mag < cfg.deadzone){
+    yaw = pitch = 0;
+  } else {
+    const s = (mag - cfg.deadzone) / mag;
+    yaw *= s; pitch *= s;
+  }
+
+  // Rifle mode intentionally omits aim acceleration until the grip and axes
+  // have been tuned. It retains the user's deadzone and smoothing settings.
+  const a = cfg.smooth > 0
+    ? 1 - Math.exp(dt * 60 * Math.log(cfg.smooth))
+    : 1;
+  rifleSmYaw += a * (yaw - rifleSmYaw);
+  rifleSmPitch += a * (pitch - rifleSmPitch);
+
+  pendYaw += (cfg.invX ? -rifleSmYaw : rifleSmYaw) * dt;
+  pendPitch += (cfg.invY ? -rifleSmPitch : rifleSmPitch) * dt;
+  paintRifle(cfg.invX ? -rifleSmYaw : rifleSmYaw,
+             cfg.invY ? -rifleSmPitch : rifleSmPitch);
+}
+
+/* Fold an accelerometer sample into the gravity estimate.
+
+   Heavy low-pass - it only drifts as fast as your wrist rolls. The first
+   reading is taken as-is: easing out of a hardcoded [0,0,1] left "up" along
+   the screen normal for the ~2s it took to converge, which swapped yaw into
+   pitch for the whole start of a session, and the phone is almost never flat
+   on a desk at the moment you pick it up and aim. */
+function feedGravity(vec, exact){
+  if (!vec || vec[0] === null || vec[0] === undefined) return;
+  if (exact || !gravity){
+    gravity = vec.slice();           // a real gravity sensor needs no filtering
+    return;
+  }
+  const k = 0.02;
+  gravity = [gravity[0] + k * (vec[0] - gravity[0]),
+             gravity[1] + k * (vec[1] - gravity[1]),
+             gravity[2] + k * (vec[2] - gravity[2])];
+}
+
+function onMotion(e){
+  const g = e.accelerationIncludingGravity;
+  const r = e.rotationRate;
+  if (!r || r.alpha === null) return;
+  feedGravity(g && g.x !== null ? [g.x, g.y, g.z] : null, false);
+  // rotationRate maps to the device axes: beta→x, gamma→y, alpha→z (deg/s).
+  processSample([r.beta || 0, r.gamma || 0, r.alpha || 0]);
+}
+
+/* The pipeline proper, fed by whichever sensor source is running. w is
+   angular velocity about the device x, y and z axes, in degrees per second. */
+function processSample(w){
+  const up = gravity && norm(gravity);
+  if (!up) return;
+  lastUp = up;
+
+  // Barrel direction in device coordinates.
+  const barrel = BARREL;
+  // World-right = barrel × up, with the barrel flattened to the horizon.
+  const flat = norm(barrel.map((c,i) => c - dot(barrel,up)*up[i]));
+  const right = flat ? norm(cross(flat, up)) : lastRight;
+  if (flat) lastRight = right;
+
+  // Real elapsed time. The rate is not guaranteed to be 60 Hz - it sags when
+  // the phone is busy, which is exactly when aim must stay predictable - and
+  // assuming a fixed step made sensitivity drift with the sample rate.
+  const tNow = performance.now();
+  const dt = lastMotionT ? Math.min(0.1, (tNow - lastMotionT) / 1000) : 1/60;
+  lastMotionT = tNow;
+
+  motionSeen = true;
+  samples++;
+  if (tNow - lastT > 500){
+    lastHz = Math.round(samples * 1000 / (tNow - lastT));
+    samples = 0; lastT = tNow;
+  }
+
+  if (aimMode === "rifle"){
+    processRifleMotion(w, up, right, dt);
+    return;
+  }
+
+  let yaw   = -dot(w, up);      // rotation about world vertical
+  let pitch =  dot(w, right);   // rotation about world horizontal
+
+  // Deadzone kills the ~1 deg/s tremor that would otherwise buzz the crosshair.
+  // Subtracting it rather than gating keeps the response continuous - a hard
+  // gate makes the crosshair stick and then jump as you cross the threshold.
+  const mag = Math.hypot(yaw, pitch);
+  if (mag < cfg.deadzone){
+    yaw = 0; pitch = 0;
+  } else {
+    const s = (mag - cfg.deadzone) / mag;
+    yaw *= s; pitch *= s;
+  }
+
+  // Axis lock. Applied before anything scales the values, so a locked axis is
+  // dead no matter what the sliders or the acceleration curve are doing.
+
+  // Aim acceleration, applied after the deadzone so the knee is measured on
+  // real motion rather than on tremor that was about to be discarded.
+  // Boosted per axis, not on combined speed: a fast horizontal swing tips the
+  // phone slightly, and scaling both axes by the combined magnitude amplified
+  // that incidental pitch exactly when turning fastest - the cursor dived on
+  // quick turns. Each axis now only accelerates on its own motion.
+  if (cfg.gyroAccel){
+    const k = cfg.accelKnee, amt = cfg.accelAmount;
+    yaw   *= 1 + amt * Math.min(1, Math.abs(yaw)   / k);
+    pitch *= 1 + amt * Math.min(1, Math.abs(pitch) / k);
+  }
+
+  // Smoothing as a time constant, not a per-sample fraction, so the felt
+  // response no longer changes with the sensor rate. At 60 Hz this reproduces
+  // the old coefficient exactly, so existing slider settings still mean what
+  // they meant before.
+  const a = cfg.smooth > 0
+    ? 1 - Math.exp(dt * 60 * Math.log(cfg.smooth))
+    : 1;
+  smYaw   += a * (yaw   - smYaw);
+  smPitch += a * (pitch - smPitch);
+
+  if (!frozen){
+    // Bank degrees, not rates, so the send loop can run slower than the sensor
+    // without ever dropping a sample.
+    pendYaw   += (cfg.invX ? -smYaw   : smYaw)   * dt;
+    pendPitch += (cfg.invY ? -smPitch : smPitch) * dt;
+  }
+
+  // Paint what is actually sent, flips included - otherwise the reticle
+  // contradicts the mouse the moment you use a flip chip.
+  paint(cfg.invX ? -smYaw : smYaw, cfg.invY ? -smPitch : smPitch);
+}
+
+/* Send at a fixed 100 Hz regardless of sensor rate. */
+setInterval(() => {
+  if (!connected) return;
+  // The look stick banks degrees exactly as the gyro does, so the two sum into
+  // one packet instead of arriving as competing streams.
+  if (cfg.lookOn && cfg.lookSpeed && (lookX || lookY)){
+    pendYaw   += -lookX * cfg.lookSpeed * 0.01;
+    pendPitch += -lookY * cfg.lookSpeed * cfg.lookPitchRatio * 0.01;
+  }
+  if (pendYaw || pendPitch){
+    send({t:"aim", yaw:pendYaw, pitch:pendPitch});
+    pendYaw = 0; pendPitch = 0;
+  }
+}, 10);
+
+let px = 0, py = 0;
+function paint(yaw, pitch){
+  if (!$("setup").classList.contains("on")) return;
+  px = Math.max(-120, Math.min(120, px * 0.9 - yaw * 0.55));
+  py = Math.max(-70,  Math.min(70,  py * 0.9 - pitch * 0.55));
+  $("reticle").setAttribute("transform", `translate(${px.toFixed(1)},${py.toFixed(1)})`);
+  $("r-yaw").textContent   = yaw.toFixed(1);
+  $("r-pitch").textContent = pitch.toFixed(1);
+  $("r-hz").textContent    = lastHz;
+}
+
+/* The single most common failure is a non-secure origin, and it is silent:
+   Chrome does not fire devicemotion, and may not define DeviceMotionEvent at
+   all. Say so on screen rather than leaving a dead-looking Go live button. */
+function sensorsBlocked(){
+  const el = $("hint");
+  el.innerHTML =
+    "No sensor data. Chrome blocks motion sensors on plain-HTTP origins — " +
+    "open <b>chrome://flags</b>, search <b>Insecure origins treated as " +
+    `secure</b>, add <b>http://${location.host}</b>, set Enabled, relaunch.`;
+  el.style.color = "var(--ember)";
+}
+
+/* ------------------------------------------------------- sensor source -- */
+/* devicemotion is capped at 60 Hz by Chrome regardless of what the chip can
+   do. The Generic Sensor API takes a requested frequency and will go higher -
+   typically 100-200 Hz - which cuts a frame of latency and integrates more
+   accurately during fast flicks.
+
+   It is opt-in above 60 Hz on purpose: devicemotion is the known-good path
+   that every measurement this project relies on was taken through, and the two
+   APIs do not guarantee identical sign conventions. Leaving the slider at 60
+   keeps the behaviour you already tuned. */
+const RAD2DEG = 180 / Math.PI;
+let sensorSource = "none";
+let liveSensors = [];
+
+function stopSensors(){
+  for (const s of liveSensors){ try { s.stop(); } catch {} }
+  liveSensors = [];
+  window.removeEventListener("devicemotion", onMotion);
+  sensorSource = "none";
+}
+
+function startHighRate(hz){
+  if (typeof Gyroscope === "undefined") return false;
+  try {
+    const gyro = new Gyroscope({frequency: hz});
+    gyro.addEventListener("reading", () => {
+      // Gyroscope reports rad/s about device x, y, z - the same axis order the
+      // pipeline wants, unlike devicemotion's beta/gamma/alpha shuffle.
+      processSample([gyro.x * RAD2DEG, gyro.y * RAD2DEG, gyro.z * RAD2DEG]);
+    });
+    gyro.addEventListener("error", () => { stopSensors(); startSensors(); });
+    gyro.start();
+    liveSensors.push(gyro);
+
+    // A dedicated gravity sensor is exact, so it needs no low-pass at all.
+    if (typeof GravitySensor !== "undefined"){
+      const grav = new GravitySensor({frequency: Math.min(hz, 30)});
+      grav.addEventListener("reading",
+        () => feedGravity([grav.x, grav.y, grav.z], true));
+      grav.start();
+      liveSensors.push(grav);
+    } else if (typeof Accelerometer !== "undefined"){
+      const acc = new Accelerometer({frequency: Math.min(hz, 30)});
+      acc.addEventListener("reading",
+        () => feedGravity([acc.x, acc.y, acc.z], false));
+      acc.start();
+      liveSensors.push(acc);
+    } else {
+      return false;                    // no gravity source: cannot resolve axes
+    }
+    sensorSource = "generic";
+    return true;
+  } catch {
+    stopSensors();
+    return false;
+  }
+}
+
+async function startSensors(){
+  stopSensors();
+
+  if (cfg.sensorHz > 60 && startHighRate(cfg.sensorHz)){
+    setTimeout(() => {
+      // Requesting a rate is not the same as getting one; if nothing arrived,
+      // fall back rather than leaving the controller dead.
+      if (!motionSeen){ stopSensors(); startLegacySensors(); }
+    }, 1200);
+    return;
+  }
+  await startLegacySensors();
+}
+
+async function startLegacySensors(){
+  // `typeof X?.y` still throws when X was never declared, so test the bare
+  // name first - on an insecure origin this is exactly what happens, and the
+  // ReferenceError used to abort the Go live handler before it switched screen.
+  if (typeof DeviceMotionEvent === "undefined"){
+    sensorsBlocked();
+    return;
+  }
+  // iOS gates this behind a tap; Android grants it silently.
+  if (typeof DeviceMotionEvent.requestPermission === "function"){
+    try { await DeviceMotionEvent.requestPermission(); } catch {}
+  }
+  window.addEventListener("devicemotion", onMotion);
+  sensorSource = "devicemotion";
+  // The interface can exist while no events ever arrive; only samples prove it.
+  setTimeout(() => { if (!motionSeen) sensorsBlocked(); }, 1500);
+}
+
+/* ------------------------------------------------------------ controls -- */
+function bindSlider(id, key, fmt){
+  const el = $(id), out = $(id + "-v");
+  el.addEventListener("input", () => {
+    out.textContent = fmt(el.value);
+    if (key) cfg[key] = parseFloat(el.value);
+    pushConfig();
+  });
+}
+bindSlider("sx",  null, v => v);
+bindSlider("sy",  null, v => v);
+bindSlider("ads", null, v => (+v).toFixed(2));
+bindSlider("dz",  "deadzone", v => (+v).toFixed(1));
+bindSlider("sm",  "smooth",   v => (+v).toFixed(2));
+bindSlider("hz",  "sensorHz", v => v);
+bindSlider("look","lookSpeed", v => v);
+// Changing the rate means tearing the sensor down and starting the other API.
+$("hz").addEventListener("change", () => { motionSeen = false; startSensors(); });
+
+function bindChip(id, key){
+  $(id).addEventListener("click", () => {
+    cfg[key] = !cfg[key];
+    $(id).setAttribute("aria-pressed", String(cfg[key]));
+  });
+}
+bindChip("inv-x", "invX");
+bindChip("inv-y", "invY");
+bindChip("aim-accel", "gyroAccel");
+bindChip("haptics",   "haptics");
+// Buzz on enabling, so the chip demonstrates what it turns on.
+$("haptics").addEventListener("click", () => { if (cfg.haptics) haptic("tap"); });
+
+bindChip("look-on",   "lookOn");
+$("look-on").addEventListener("click", applyLookVisible);
+applyLookVisible();
+
+/* --------------------------------------------------------- touch zones -- */
+function zone(id, action){
+  const el = $(id);
+  if (!el) return;          // zone temporarily absent from the live screen
+  let startY = 0, swiped = false, active = false;
+
+  el.addEventListener("pointerdown", e => {
+    el.setPointerCapture(e.pointerId);
+    startY = e.clientY; swiped = false; active = true;
+    el.classList.add("hit");
+    haptic("tap");
+    if (action === "fire" || action === "ads") send({t:"btn", id:action, down:true});
+    // A tap, not a hold: fires once on press so it feels immediate.
+    if (action === "center"){ pendYaw = 0; pendPitch = 0; send({t:"tap", id:"recenter"}); }
+    if (action === "freeze") frozen = true;
+    if (action === "fire")   { setAction("firing", true); recEvent("fire"); }
+    if (action === "ads")    { setAction("adsing", true); recEvent("ads"); }
+    if (action === "freeze") { setAction("frozen", true); recEvent("freeze"); }
+  });
+
+  el.addEventListener("pointermove", e => {
+    if (!active || swiped || action !== "fire") return;
+    const dy = e.clientY - startY;
+    if (Math.abs(dy) > 70){
+      swiped = true;
+      haptic("swap");
+      send({t:"btn", id:"fire", down:false});          // a swipe is not a shot
+      setAction("firing", false);
+      send({t:"tap", id: dy < 0 ? "weapon_primary" : "weapon_secondary"});
+    }
+  });
+
+  const end = e => {
+    if (!active) return;
+    active = false;
+    el.classList.remove("hit");
+    if ((action === "fire" && !swiped) || action === "ads")
+      send({t:"btn", id:action, down:false});
+    if (action === "freeze") frozen = false;
+    if (action === "fire")   setAction("firing", false);
+    if (action === "ads")    setAction("adsing", false);
+    if (action === "freeze") setAction("frozen", false);
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+}
+zone("z-fire", "fire");
+zone("z-ads", "ads");
+zone("z-freeze", "freeze");
+zone("z-center", "center");
+
+/* ------------------------------------------------------------ game HUD -- */
+/* The marked rectangle is stored as fractions of the snapshot, so it survives
+   the phone and the monitor disagreeing about pixel sizes - which they do:
+   mss sees 3840x2160 while Windows reports the DPI-scaled 2560x1440. */
+/* ---------------------------------------------------------- landscape -- */
+/* Landscape is the app's only supported orientation. The gate is cosmetic;
+   the real defence is that every aspect calculation below derives from the
+   long and short edges rather than from width and height, so a rectangle
+   keeps its shape even if the lock is refused or the gate is bypassed. */
+const longEdge  = () => Math.max(window.innerWidth, window.innerHeight);
+const shortEdge = () => Math.min(window.innerWidth, window.innerHeight);
+const phoneAspect = () => longEdge() / shortEdge();
+
+function applyOrientation(){
+  document.body.classList.toggle(
+    "portrait", window.innerHeight > window.innerWidth);
+}
+addEventListener("resize", applyOrientation);
+addEventListener("orientationchange", applyOrientation);
+applyOrientation();
+
+/* The Screen Orientation API only grants a lock to a fullscreen document, so
+   these two always go together. Both can be refused - hence the gate. */
+async function lockLandscape(){
+  try {
+    if (!document.fullscreenElement)
+      await document.documentElement.requestFullscreen();
+  } catch {}
+  try { await screen.orientation.lock("landscape"); } catch {}
+  applyOrientation();
+}
+
+const MAX_BOXES = 3;
+const BOX_COLOURS = ["#FFB020", "#3ADB7E", "#4DA6FF"];
+const hud = {game:"", on:false, regions:[]};
+const newRegion = i => ({
+  sx:0.70, sy:0.70, sw:0.26, sh:0.24,
+  dx:0.04, dy:0.04 + i * 0.26, dw:0.32, dh:0.22,
+});
+
+(function hudConfig(){
+  const shotWrap = $("shotwrap"), destWrap = $("destwrap");
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+
+  // The destination preview has to match the phone's own proportions or the
+  // placement would land somewhere else once live.
+  function sizeDest(){
+    destWrap.style.aspectRatio = `${longEdge()} / ${shortEdge()}`;
+  }
+  addEventListener("resize", sizeDest);
+
+  function build(){
+    sizeDest();
+    shotWrap.querySelectorAll(".mark").forEach(n => n.remove());
+    destWrap.innerHTML = "";
+    // Column guides, mirroring the live layout's 40 / 19 / 41 split.
+    for (const [flex, label] of [[40,"ADS + stick"], [19,"freeze"], [41,"fire"]]){
+      const col = document.createElement("div");
+      col.className = "destcol";
+      col.style.flex = `1 1 ${flex}%`;
+      col.textContent = label;
+      destWrap.appendChild(col);
+    }
+    hud.regions.forEach((_, i) => {
+      makeBox(shotWrap, i, "s");
+      makeBox(destWrap, i, "d");
+    });
+    const n = hud.regions.length;
+    const label = n ? `${n} of ${MAX_BOXES} regions` : "none marked";
+    $("src-status").textContent = label;
+    $("dest-status").textContent = n ? `${n} panel${n > 1 ? "s" : ""} placed`
+                                     : "nothing to place";
+    paint();
+  }
+
+  function makeBox(host, i, kind){
+    const el = document.createElement("div");
+    el.className = "mark";
+    el.dataset.i = i; el.dataset.kind = kind;
+    el.style.borderColor = BOX_COLOURS[i];
+    el.style.background = BOX_COLOURS[i] + "24";
+    el.innerHTML = `<span class="tag">${i + 1}</span><div class="grip"></div>`;
+    el.querySelector(".tag").style.background = BOX_COLOURS[i];
+    el.querySelector(".grip").style.background = BOX_COLOURS[i];
+    if (kind === "s"){
+      const del = document.createElement("button");
+      del.className = "del";
+      del.textContent = "×";
+      // stopPropagation on the press too, or the box starts a drag underneath.
+      del.addEventListener("pointerdown", e => e.stopPropagation());
+      del.addEventListener("click", e => {
+        e.stopPropagation();
+        hud.regions.splice(i, 1);
+        build();
+      });
+      el.appendChild(del);
+    }
+    host.appendChild(el);
+    drag(el, host, i, kind, false);
+    drag(el.querySelector(".grip"), host, i, kind, true);
+  }
+
+  /* The panel on the phone must have the same on-screen shape as the region it
+     mirrors, or a square minimap lands in a wide slot and comes out smeared.
+     Both rectangles are stored as fractions of differently-shaped surfaces, so
+     matching them means going through real pixel proportions:
+         (dw/dh) * phoneAspect  ==  (sw/sh) * screenAspect                    */
+  function screenAspect(){
+    const img = $("shot");
+    return (img.naturalWidth && img.naturalHeight)
+      ? img.naturalWidth / img.naturalHeight : 16 / 9;
+  }
+
+  function lockDest(r){
+    r.dh = r.dw * phoneAspect() * r.sh / Math.max(1e-6, r.sw * screenAspect());
+    if (r.dh > 1){ r.dw /= r.dh; r.dh = 1; }   // too tall to fit: shrink both
+    r.dx = Math.min(r.dx, 1 - r.dw);
+    r.dy = Math.min(r.dy, 1 - r.dh);
+  }
+
+  function paint(){
+    for (const el of document.querySelectorAll(".mark")){
+      const r = hud.regions[el.dataset.i];
+      if (!r) continue;
+      const p = el.dataset.kind;                 // "s" or "d"
+      el.style.left   = (r[p + "x"] * 100) + "%";
+      el.style.top    = (r[p + "y"] * 100) + "%";
+      el.style.width  = (r[p + "w"] * 100) + "%";
+      el.style.height = (r[p + "h"] * 100) + "%";
+    }
+  }
+
+  function drag(el, host, i, kind, resizing){
+    let pid = null, ax = 0, ay = 0, base = null;
+    el.addEventListener("pointerdown", e => {
+      pid = e.pointerId; ax = e.clientX; ay = e.clientY;
+      base = {...hud.regions[i]};
+      el.setPointerCapture(pid);
+      e.preventDefault(); e.stopPropagation();
+    });
+    el.addEventListener("pointermove", e => {
+      if (e.pointerId !== pid) return;
+      const box = host.getBoundingClientRect();
+      const dx = (e.clientX - ax) / box.width;
+      const dy = (e.clientY - ay) / box.height;
+      const r = hud.regions[i], p = kind;
+      if (resizing && p === "s"){
+        // Floor the size so a box can never be collapsed to nothing, which
+        // would make the capture fail on every frame.
+        r.sw = Math.max(0.04, Math.min(base.sw + dx, 1 - base.sx));
+        r.sh = Math.max(0.04, Math.min(base.sh + dy, 1 - base.sy));
+        lockDest(r);
+      } else if (resizing){
+        // Only the width is yours to set; the height follows from the shape
+        // of the capture, so the panel cannot be stretched out of proportion.
+        r.dw = Math.max(0.06, Math.min(base.dw + dx, 1 - base.dx));
+        lockDest(r);
+      } else {
+        r[p + "x"] = clamp01(Math.min(base[p + "x"] + dx, 1 - r[p + "w"]));
+        r[p + "y"] = clamp01(Math.min(base[p + "y"] + dy, 1 - r[p + "h"]));
+      }
+      paint();
+      e.preventDefault(); e.stopPropagation();
+    });
+    const end = e => { if (e.pointerId === pid) pid = null; };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  }
+
+  function addBox(){
+    if (hud.regions.length >= MAX_BOXES) return;
+    const r = newRegion(hud.regions.length);
+    lockDest(r);
+    hud.regions.push(r);
+    build();
+  }
+
+  /* The two steps share one full-screen editor: the live wrap is moved into
+     the stage and back out again afterwards. Moving the node keeps the boxes
+     and their listeners intact, so there is no second copy to keep in sync. */
+  let edMode = null;
+
+  function openEditor(mode){
+    edMode = mode;
+    const wrap = mode === "s" ? shotWrap : destWrap;
+    $("editorstage").appendChild(wrap);
+    $("editor").classList.add("on");
+    // Add/remove only make sense against the capture; placement just moves
+    // whatever already exists.
+    const capture = mode === "s";
+    $("ed-add").style.display = capture ? "" : "none";
+    $("ed-del").style.display = capture ? "" : "none";
+    $("ed-title").textContent = capture ? "what to capture" : "where to put it";
+    requestAnimationFrame(() => {
+      const stage = $("editorstage").getBoundingClientRect();
+      const aspect = capture ? screenAspect() : phoneAspect();
+      let w = stage.width, h = w / aspect;
+      if (h > stage.height){ h = stage.height; w = h * aspect; }
+      wrap.style.width = w + "px";
+      wrap.style.height = h + "px";
+      paint();
+    });
+  }
+
+  function closeEditor(){
+    if (!edMode) return;
+    const wrap = edMode === "s" ? shotWrap : destWrap;
+    const anchor = $(edMode === "s" ? "shotanchor" : "destanchor");
+    wrap.style.width = wrap.style.height = "";
+    anchor.parentNode.insertBefore(wrap, anchor);
+    $("editor").classList.remove("on");
+    edMode = null;
+    paint();
+  }
+
+  $("expand-src").addEventListener("click", () => openEditor("s"));
+  $("expand-dest").addEventListener("click", () => openEditor("d"));
+  $("ed-done").addEventListener("click", closeEditor);
+  $("ed-add").addEventListener("click", () => {
+    addBox();
+    if (edMode) openEditor(edMode);   // build() re-creates the boxes; re-size
+  });
+  $("ed-del").addEventListener("click", () => {
+    if (!hud.regions.length) return;
+    hud.regions.pop();
+    build();
+    if (edMode) openEditor(edMode);
+  });
+
+  // The true monitor aspect is only known once the snapshot has decoded, so
+  // re-lock every panel then - otherwise saved profiles keep an old shape.
+  $("shot").addEventListener("load", () => {
+    hud.regions.forEach(lockDest);
+    paint();
+  });
+
+  $("game-btn").addEventListener("click", async () => {
+    // Lock before marking: a box marked in portrait would be stored against
+    // the wrong aspect and come out skewed once live.
+    await lockLandscape();
+    $("setup").classList.remove("on");
+    $("gamecfg").classList.add("on");
+    // Cache-buster: without it Chrome happily shows a stale desktop.
+    $("shot").src = "/snapshot.jpg?t=" + Date.now();
+    fetch("/profile.json").then(r => r.json()).then(p => {
+      hud.game = p.game || "";
+      // An empty list is a legitimate saved state - do not repopulate it.
+      hud.regions = (p.regions || []).slice(0, MAX_BOXES);
+      $("game-name").value = hud.game;
+      build();
+    }).catch(() => build());
+    loadRules();
+  });
+
+  $("game-back").addEventListener("click", () => {
+    $("gamecfg").classList.remove("on");
+    $("setup").classList.add("on");
+  });
+
+  $("game-save").addEventListener("click", () => {
+    hud.game = $("game-name").value.trim();
+    hud.on = true;
+    send({t:"macros", v:macros});
+    send({t:"profile", game:hud.game, on:true, regions:hud.regions});
+    $("gamecfg").classList.remove("on");
+    $("go").click();              // straight into the controller screen
+  });
+})();
+
+/* --------------------------------------------------------- sensor gate -- */
+/* Reports whether motion is actually arriving, and offers the fix when it is
+   not. Deliberately not a link: Chrome blocks pages from navigating to
+   chrome:// URLs, so the best a page can do is put the strings on the
+   clipboard. */
+(function sensorGate(){
+  const card = $("flagcard"), title = $("flagtitle"), body = $("flagbody");
+  $("flagorigin").textContent = location.origin;
+
+  $("flagtoggle").addEventListener("click", () => body.classList.toggle("on"));
+
+  for (const btn of document.querySelectorAll("[data-copy]")){
+    btn.addEventListener("click", async () => {
+      const text = $(btn.dataset.copy).textContent;
+      let ok = false;
+      try {
+        // The async clipboard API itself needs a secure context - the very
+        // thing that is missing here - so fall back to the old selection
+        // trick, which still works on plain HTTP.
+        await navigator.clipboard.writeText(text);
+        ok = true;
+      } catch {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.cssText = "position:fixed;opacity:0";
+        document.body.appendChild(ta);
+        ta.select();
+        try { ok = document.execCommand("copy"); } catch {}
+        ta.remove();
+      }
+      btn.textContent = ok ? "copied" : "select it";
+      haptic("tap");
+      setTimeout(() => { btn.textContent = "copy"; }, 1400);
+    });
+  }
+
+  // motionSeen is set by the real sensor handler, so this reports what the
+  // aiming pipeline is actually receiving rather than what ought to work.
+  setInterval(() => {
+    const secure = window.isSecureContext;
+    const live = motionSeen;
+    card.classList.toggle("bad", !live);
+    card.classList.toggle("ok", live);
+    title.textContent = live
+      ? `Sensors live · ${lastHz} Hz`
+      : (secure ? "No motion data — check phone permissions"
+                : "Sensors blocked — origin is not secure");
+    if (!live && !body.classList.contains("on") && !card.dataset.opened){
+      body.classList.add("on");          // open itself once, when it matters
+      card.dataset.opened = "1";
+    }
+  }, 1000);
+})();
+
+/* ------------------------------------------------------------ library -- */
+/* One focused loadout at a time. Native swipe and scroll-snap do the physical
+   carousel work; this state only tracks which card owns the visual emphasis
+   and keeps the arrow controls and position readout in sync. */
+let library = [], activeId = null, libraryFocus = 0, carouselFrame = null;
+
+function showScreen(id){
+  for (const s of document.querySelectorAll(".screen")) s.classList.remove("on");
+  $(id).classList.add("on");
+}
+
+function applySetupIdentity(profile={}){
+  const pid = profile.id || activeId;
+  $("setup-game").textContent = profile.game || "Untitled profile";
+  const known = library.find(g => g.id === pid);
+  const cover = $("setup-cover");
+  const hasCover = Boolean(known?.cover && pid);
+  cover.classList.toggle("has-cover", hasCover);
+  cover.style.backgroundImage = hasCover
+    ? `url(/cover/${pid}.jpg?t=${Date.now()})` : "";
+}
+
+function renderLibrary(){
+  const grid = $("gamegrid");
+  grid.innerHTML = "";
+  $("lib-count").textContent = `${library.length} profile${library.length === 1 ? "" : "s"}`;
+  const activeProfile = library.find(g => g.id === activeId);
+  if (activeProfile) applySetupIdentity(activeProfile);
+  if (!library.length){
+    grid.innerHTML = '<div class="emptystate">No profiles online — create your first loadout</div>';
+    libraryFocus = 0;
+    syncLibraryCarousel();
+    return;
+  }
+  library.forEach(g => {
+    const card = document.createElement("article");
+    card.className = "gcard" + (g.id === activeId ? " active" : "");
+    card.dataset.id = g.id;
+    card.setAttribute("role", "listitem");
+    card.tabIndex = 0;
+
+    const cover = document.createElement("div");
+    cover.className = "gcover" + (g.cover ? "" : " empty");
+    // Cache-bust: a re-captured cover keeps the same URL.
+    if (g.cover) cover.style.backgroundImage = `url(/cover/${g.id}.jpg?t=${Date.now()})`;
+    card.appendChild(cover);
+
+    if (g.id === activeId){
+      const flag = document.createElement("div");
+      flag.className = "activeflag";
+      flag.textContent = "ACTIVE LOADOUT";
+      card.appendChild(flag);
+    }
+
+    const meta = document.createElement("div");
+    meta.className = "gmeta";
+    const nm = document.createElement("b");
+    nm.textContent = g.game || g.id;
+    const st = document.createElement("i");
+    st.textContent = g.id === activeId ? "Synced with PC agent" : "Ready to synchronize";
+    meta.append(nm, st);
+
+    const stats = document.createElement("div");
+    stats.className = "gstats";
+    for (const [value, label] of [[g.regions, "HUD"], [g.rules, "Alerts"], [g.macros, "Macros"]]){
+      const stat = document.createElement("span");
+      stat.className = "gstat";
+      const strong = document.createElement("strong");
+      strong.textContent = String(value).padStart(2, "0");
+      stat.append(strong, label);
+      stats.appendChild(stat);
+    }
+    meta.appendChild(stats);
+
+    const actions = document.createElement("div");
+    actions.className = "gactions";
+
+    const configure = document.createElement("button");
+    configure.className = "gconfig";
+    configure.textContent = "Configure";
+    configure.addEventListener("click", e => {
+      e.stopPropagation(); haptic("tap"); selectGame(g.id, false);
+    });
+    actions.appendChild(configure);
+
+    const play = document.createElement("button");
+    play.className = "glive";
+    play.textContent = "▶ Deploy";
+    play.addEventListener("click", e => {
+      e.stopPropagation(); haptic("tap"); selectGame(g.id, true);
+    });
+    actions.appendChild(play);
+    meta.appendChild(actions);
+    card.appendChild(meta);
+
+    card.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " "){
+        e.preventDefault(); haptic("tap"); selectGame(g.id, false);
+      }
+    });
+    grid.appendChild(card);
+  });
+
+  requestAnimationFrame(() => {
+    const activeIndex = library.findIndex(g => g.id === activeId);
+    carouselTo(activeIndex >= 0 ? activeIndex : Math.min(libraryFocus, library.length - 1), "auto");
+  });
+}
+
+function syncLibraryCarousel(){
+  const grid = $("gamegrid");
+  const cards = [...grid.querySelectorAll(".gcard")];
+  if (!cards.length){
+    $("lib-index").textContent = "00 / 00";
+    $("lib-prev").disabled = $("lib-next").disabled = true;
+    return;
+  }
+  const centre = grid.scrollLeft + grid.clientWidth / 2;
+  let closest = 0, distance = Infinity;
+  cards.forEach((card, i) => {
+    const d = Math.abs(card.offsetLeft + card.offsetWidth / 2 - centre);
+    if (d < distance){ distance = d; closest = i; }
+  });
+  libraryFocus = closest;
+  cards.forEach((card, i) => card.classList.toggle("is-focus", i === closest));
+  $("lib-index").textContent = `${String(closest + 1).padStart(2, "0")} / ${String(cards.length).padStart(2, "0")}`;
+  $("lib-prev").disabled = closest === 0;
+  $("lib-next").disabled = closest === cards.length - 1;
+}
+
+function carouselTo(index, behavior="smooth"){
+  const grid = $("gamegrid");
+  const cards = [...grid.querySelectorAll(".gcard")];
+  if (!cards.length){ syncLibraryCarousel(); return; }
+  libraryFocus = Math.max(0, Math.min(cards.length - 1, index));
+  const card = cards[libraryFocus];
+  grid.scrollTo({
+    left: card.offsetLeft - (grid.clientWidth - card.offsetWidth) / 2,
+    behavior,
+  });
+  if (behavior === "auto") syncLibraryCarousel();
+}
+
+$("gamegrid").addEventListener("scroll", () => {
+  cancelAnimationFrame(carouselFrame);
+  carouselFrame = requestAnimationFrame(syncLibraryCarousel);
+}, {passive:true});
+$("lib-prev").addEventListener("click", () => { haptic("tap"); carouselTo(libraryFocus - 1); });
+$("lib-next").addEventListener("click", () => { haptic("tap"); carouselTo(libraryFocus + 1); });
+addEventListener("resize", () => carouselTo(libraryFocus, "auto"));
+
+function loadLibrary(){
+  return fetch("/profiles.json").then(r => r.json()).then(p => {
+    library = p.v || [];
+    activeId = p.active;
+    renderLibrary();
+  }).catch(() => { library = []; renderLibrary(); });
+}
+
+/* Selecting is asynchronous - the PC has to load the profile before the
+   screens can be populated from it - so wait for the switch to land. */
+function selectGame(id, goLive){
+  send({t:"profile_select", id});
+  setTimeout(() => {
+    loadRules();
+    loadLibrary();
+    fetch("/profile.json").then(r => r.json()).then(p => {
+      applySetupIdentity(p);
+      applyTuning(p.tuning);
+      applyEnemyTracking(p);
+      if (goLive) $("go").click();
+      else showScreen("setup");
+    });
+  }, 260);
+}
+
+/* Sliders are the source of truth on screen, so a loaded profile has to be
+   pushed back into them or the next nudge would send stale values. */
+function applyTuning(t){
+  if (!t) return;
+  const map = {sens_x:"sx", sens_y:"sy", ads_scale:"ads"};
+  for (const [key, id] of Object.entries(map)){
+    if (t[key] === undefined) continue;
+    const el = $(id);
+    el.value = t[key];
+    const out = $(id + "-v");
+    if (out) out.textContent = el.value;
+  }
+}
+
+$("to-library").addEventListener("click", () => { loadLibrary(); showScreen("library"); });
+$("lib-new").addEventListener("click", () => {
+  const name = prompt("Game name");
+  if (!name) return;
+  send({t:"profile_new", game:name});
+  setTimeout(loadLibrary, 300);
+});
+$("cover-grab").addEventListener("click", () => {
+  haptic("tap");
+  send({t:"cover_capture"});
+  $("cover-grab").innerHTML = '◉ <span class="tool-label">Captured</span>';
+  setTimeout(() => {
+    $("cover-grab").innerHTML = '◉ <span class="tool-label">Cover</span>';
+  }, 1400);
+});
+$("prof-export").addEventListener("click", () => {
+  if (activeId) location.href = `/export/${activeId}.json`;
+});
+$("prof-delete").addEventListener("click", () => {
+  if (!activeId) return;
+  if (!confirm("Delete this game profile?")) return;
+  send({t:"profile_delete", id:activeId});
+  setTimeout(() => { loadLibrary(); showScreen("library"); }, 300);
+});
+$("lib-import").addEventListener("click", () => $("lib-file").click());
+$("lib-file").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    await fetch("/import", {method:"POST", body: await file.text()});
+    loadLibrary();
+  } catch { alert("Could not import that file."); }
+  e.target.value = "";
+});
+
+/* ------------------------------------------------------------ haptics -- */
+/* A small vocabulary rather than one buzz for everything, so the pattern
+   itself tells you what happened without looking. Fired on state changes
+   only - never while a control is simply being held - because a continuous
+   rumble under your thumb is both distracting and expensive on battery. */
+const HAPTIC = {
+  tap:   12,             // a zone or macro going down
+  light:  8,             // stick crossing into a new direction
+  swap: [10, 45, 10],    // weapon swipe: two beats, distinct from a tap
+  alert:[18, 70, 18],    // the PC telling you something
+  enemy:[100, 55, 100, 55, 160],
+};
+
+function haptic(kind){
+  if (!cfg.haptics || !navigator.vibrate) return;
+  try { navigator.vibrate(HAPTIC[kind] ?? HAPTIC.tap); } catch {}
+}
+
+/* -------------------------------------------------------------- macros -- */
+/* Ten slots, edited on the config screen and drawn along the top edge of the
+   controller. Only slots with keys are drawn, so an unused macro costs no
+   screen space and cannot be hit by accident. */
+const MAX_MACROS = 10;
+let macros = [];
+
+function normaliseMacros(list){
+  const out = (list || []).slice(0, MAX_MACROS)
+    .map(m => ({label: m.label || "", keys: m.keys || ""}));
+  while (out.length < MAX_MACROS) out.push({label:"", keys:""});
+  return out;
+}
+
+function renderMacroGrid(){
+  const host = $("macrogrid");
+  host.innerHTML = "";
+  macros.forEach((m, i) => {
+    const row = document.createElement("div");
+    row.className = "macrorow";
+
+    const idx = document.createElement("span");
+    idx.textContent = String(i + 1).padStart(2, "0");
+    row.appendChild(idx);
+
+    const lbl = document.createElement("input");
+    lbl.type = "text"; lbl.className = "lbl"; lbl.maxLength = 10;
+    lbl.placeholder = "label"; lbl.value = m.label;
+    lbl.addEventListener("input", () => { m.label = lbl.value; macroStatus(); });
+    row.appendChild(lbl);
+
+    const keys = document.createElement("input");
+    keys.type = "text"; keys.className = "keys"; keys.maxLength = 40;
+    keys.placeholder = "r  ·  space  ·  3,r"; keys.value = m.keys;
+    keys.autocapitalize = "off"; keys.spellcheck = false;
+    keys.addEventListener("input", () => { m.keys = keys.value; macroStatus(); });
+    row.appendChild(keys);
+
+    host.appendChild(row);
+  });
+  macroStatus();
+}
+
+function macroStatus(){
+  const n = macros.filter(m => m.keys.trim()).length;
+  $("macro-status").textContent = n ? `${n} of ${MAX_MACROS} bound`
+                                    : "none bound";
+}
+
+function renderMacroBar(){
+  const bar = $("macrobar");
+  bar.innerHTML = "";
+  macros.forEach((m, i) => {
+    if (!m.keys.trim()) return;            // unbound slots take no space
+    const b = document.createElement("button");
+    b.className = "macro";
+    b.textContent = m.label.trim() || m.keys.trim().split(",")[0];
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      haptic("tap");
+      recEvent("macro", m.label.trim() || m.keys.trim());
+      send({t:"macro", i});
+    });
+    bar.appendChild(b);
+  });
+}
+
+/* ------------------------------------------------------------ sessions -- */
+let sessions = [];
+
+function fmtWhen(ms){
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, {day:"2-digit", month:"short"})
+       + " " + d.toLocaleTimeString(undefined, {hour:"2-digit", minute:"2-digit"});
+}
+function fmtDur(s){
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+}
+
+function renderSessions(){
+  const host = $("sesslist");
+  host.innerHTML = "";
+  if (!sessions.length){
+    host.innerHTML = '<div class="emptystate">no runs recorded yet</div>';
+    return;
+  }
+  sessions.forEach(s => {
+    const row = document.createElement("div");
+    row.className = "rulerow";
+    const main = document.createElement("div");
+    main.className = "rulemain";
+    const t = document.createElement("div");
+    t.className = "rulename";
+    const nm = document.createElement("em");
+    nm.textContent = s.game || "Session";
+    t.appendChild(nm);
+    const d = document.createElement("span");
+    d.className = "dwellbadge";
+    d.textContent = fmtDur(s.seconds);
+    t.appendChild(d);
+    main.appendChild(t);
+    const sub = document.createElement("div");
+    sub.style.cssText = "font:9px/1.5 var(--mono);letter-spacing:.1em;color:var(--mist);margin-top:5px";
+    sub.textContent = `${fmtWhen(s.started)} · ${s.samples} samples · ${s.shots} shots`;
+    main.appendChild(sub);
+    row.appendChild(main);
+
+    const go = document.createElement("button");
+    go.textContent = "analyse";
+    go.addEventListener("click", () => {
+      haptic("tap");
+      // The report is served by the PC, so the phone hands you the address
+      // rather than trying to render it on a five-inch screen.
+      const url = `http://${location.host}/report.html?id=${encodeURIComponent(s.id)}`;
+      $("sess-url").innerHTML =
+        `Open this on your PC:<br><b style="color:var(--yellow);font-family:var(--mono);word-break:break-all">${url}</b>`;
+    });
+    row.appendChild(go);
+    host.appendChild(row);
+  });
+}
+
+function loadSessions(){
+  return fetch("/sessions.json").then(r => r.json()).then(p => {
+    sessions = p.v || [];
+    renderSessions();
+  }).catch(() => { sessions = []; renderSessions(); });
+}
+
+$("lib-sessions").addEventListener("click", () => { loadSessions(); showScreen("sessions"); });
+$("sess-back").addEventListener("click", () => { $("sess-url").textContent = ""; showScreen("library"); });
+
+/* -------------------------------------------------------------- record -- */
+/* A run is captured from Go live to leaving the controller, then uploaded.
+   Sampling is decoupled from the sensor at a fixed 20 Hz: the sensor rate is
+   adjustable and would otherwise change how much data a run produces, and
+   20 Hz is far finer than any hand movement worth analysing. */
+const REC_HZ = 20;
+let rec = null;
+
+function recStart(){
+  const t0 = performance.now();
+  rec = {
+    game: ($("setup-game").textContent || "Session").trim(),
+    started: Date.now(),
+    started0: t0,       // monotonic origin; wall-clock can jump mid-session
+    trace: [],          // [t, yawRate, pitchRate, cumYaw, cumPitch, flags]
+    events: [],         // [t, kind, detail]
+    cumYaw: 0, cumPitch: 0,
+    peak: 0, fireMs: 0, adsMs: 0, moveMs: 0, shots: 0,
+    last: t0,
+  };
+}
+
+function recEvent(kind, detail){
+  if (!rec) return;
+  rec.events.push([+((performance.now() - rec.started0) / 1000).toFixed(2),
+                   kind, detail || ""]);
+  if (kind === "fire") rec.shots += 1;
+}
+
+function recTick(){
+  if (!rec) return;
+  const now = performance.now();
+  const dt = (now - rec.last) / 1000;
+  rec.last = now;
+
+  // smYaw / smPitch are the smoothed rates the aim pipeline is actually using,
+  // so the trace reflects what the game received, not raw sensor noise.
+  const y = smYaw || 0, p = smPitch || 0;
+  rec.cumYaw   += y * dt;
+  rec.cumPitch += p * dt;
+  const speed = Math.hypot(y, p);
+  if (speed > rec.peak) rec.peak = speed;
+
+  if (actionState.firing) rec.fireMs += dt * 1000;
+  if (actionState.adsing) rec.adsMs  += dt * 1000;
+  if (actionState.moving) rec.moveMs += dt * 1000;
+
+  let flags = 0;
+  if (actionState.firing) flags |= 1;
+  if (actionState.adsing) flags |= 2;
+  if (actionState.moving) flags |= 4;
+
+  rec.trace.push([
+    +((now - rec.started0) / 1000).toFixed(2),
+    +y.toFixed(1), +p.toFixed(1),
+    +rec.cumYaw.toFixed(1), +rec.cumPitch.toFixed(1),
+    flags,
+  ]);
+}
+
+async function recStop(){
+  if (!rec) return null;
+  const run = rec;
+  rec = null;
+  const seconds = (Date.now() - run.started) / 1000;
+  if (seconds < 3 || !run.trace.length) return null;   // not worth keeping
+
+  const speeds = run.trace.map(r => Math.hypot(r[1], r[2]));
+  const firing = run.trace.filter(r => r[5] & 1).map(r => Math.hypot(r[1], r[2]));
+  const median = a => { if (!a.length) return 0;
+    const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+
+  const payload = {
+    game: run.game,
+    started: run.started,
+    seconds: +seconds.toFixed(1),
+    trace: run.trace,
+    events: run.events,
+    summary: {
+      shots:      run.shots,
+      fireSec:    +(run.fireMs / 1000).toFixed(1),
+      adsSec:     +(run.adsMs / 1000).toFixed(1),
+      moveSec:    +(run.moveMs / 1000).toFixed(1),
+      peakRate:   +run.peak.toFixed(1),
+      medRate:    +median(speeds).toFixed(1),
+      medFiring:  +median(firing).toFixed(1),
+      yawTotal:   +Math.abs(run.cumYaw).toFixed(0),
+      pitchTotal: +Math.abs(run.cumPitch).toFixed(0),
+      sampleHz:   +(run.trace.length / seconds).toFixed(1),
+    },
+  };
+  try {
+    const r = await fetch("/session", {method:"POST", body: JSON.stringify(payload)});
+    const j = await r.json();
+    return j.id;
+  } catch { return null; }
+}
+
+setInterval(recTick, 1000 / REC_HZ);
+
+/* ------------------------------------------------------ action feedback -- */
+/* One flag per held control, mirrored onto #live as a class. Keeping the
+   state here and the appearance in CSS means adding a new indicator never
+   touches the input path, which is the part that must not gain latency. */
+const actionState = {firing:false, adsing:false, frozen:false,
+                     moving:false, looking:false};
+
+function setAction(name, on){
+  if (actionState[name] === on) return;      // only paint on real transitions
+  actionState[name] = on;
+  $("live").classList.toggle(name, on);
+  renderFxState();
+}
+
+function renderFxState(){
+  const host = $("fx-state");
+  host.innerHTML = "";
+  for (const [key, label, cls] of [["firing","Fire","warm"], ["adsing","ADS",""],
+                                   ["frozen","Freeze","cool"], ["moving","Move",""],
+                                   ["looking","Look","cool"]]){
+    if (!actionState[key]) continue;
+    const b = document.createElement("b");
+    if (cls) b.className = cls;
+    b.textContent = label;
+    host.appendChild(b);
+  }
+}
+
+function clearActions(){
+  for (const k of Object.keys(actionState)) setAction(k, false);
+}
+
+/* ---------------------------------------------------------- look stick -- */
+/* The trigger doubles as a right stick: pressing it fires, dragging it steers.
+   Both are wanted at once - you shoot while tracking - so firing happens on
+   touch-down and keeps holding no matter how far you drag.
+
+   The rate is applied in the send loop, banking into the same pendYaw and
+   pendPitch the gyro uses, so the stick and the gyro add rather than compete:
+   a big stick sweep and a small gyro correction land in one packet. */
+let lookX = 0, lookY = 0;
+
+(function lookStick(){
+  const pad = $("z-look"), knob = $("lknob");
+  let pid = null, ox = 0, oy = 0, radius = 1;
+
+  const curve = v => {
+    const c = Math.max(-1, Math.min(1, v));
+    return Math.abs(c) < cfg.lookDead
+      ? 0
+      : (c - Math.sign(c) * cfg.lookDead) / (1 - cfg.lookDead);
+  };
+
+  function track(e){
+    let dx = (e.clientX - ox) / radius;
+    let dy = (e.clientY - oy) / radius;
+    const m = Math.hypot(dx, dy);
+    if (m > 1){ dx /= m; dy /= m; }     // ride the ring, not a square
+    lookX = curve(dx);
+    lookY = curve(dy);
+    knob.style.transform = "translate(-50%,-50%) "
+      + `translate(${(dx * radius).toFixed(1)}px, ${(dy * radius).toFixed(1)}px)`;
+  }
+
+  pad.addEventListener("pointerdown", e => {
+    pid = e.pointerId;
+    const r = pad.getBoundingClientRect();
+    ox = r.left + r.width / 2;
+    oy = r.top + r.height / 2;
+    radius = Math.max(1, (r.width - knob.offsetWidth) / 2);
+    pad.setPointerCapture(pid);
+    pad.classList.add("hit");
+    haptic("tap");
+    setAction("looking", true);
+    track(e);
+    // Deliberately no fire packet: this stick steers only. Firing lives on
+    // the surrounding zone, so holding fire can never drag your aim.
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  pad.addEventListener("pointermove", e => {
+    if (e.pointerId !== pid) return;
+    track(e);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  const end = e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    lookX = lookY = 0;
+    knob.style.transform = "translate(-50%,-50%)";
+    pad.classList.remove("hit");
+    setAction("looking", false);
+    e.stopPropagation();
+  };
+  pad.addEventListener("pointerup", end);
+  pad.addEventListener("pointercancel", end);
+})();
+
+function applyLookVisible(){
+  $("z-lookwrap").classList.toggle("off", !cfg.lookOn);
+  if (!cfg.lookOn) lookX = lookY = 0;
+}
+
+/* --------------------------------------------------------------- rules -- */
+/* A rule is captured by example: get into the state, grab the screen, box the
+   thing that changed. The PC keeps the reference and reports a live match
+   score, so nothing here needs to know which game is running. */
+let rules = [];
+
+function renderRules(){
+  const host = $("rulelist");
+  host.innerHTML = "";
+  $("rule-status").textContent = rules.length
+    ? `${rules.length} armed` : "none configured";
+  if (!rules.length){
+    host.innerHTML = '<div class="emptystate">no alerts yet</div>';
+    return;
+  }
+  rules.forEach((r, i) => {
+    const row = document.createElement("div");
+    row.className = "rulerow";
+
+    const main = document.createElement("div");
+    main.className = "rulemain";
+    const title = document.createElement("div");
+    title.className = "rulename";
+    const nm = document.createElement("em");
+    nm.textContent = r.name;
+    title.appendChild(nm);
+    if (r.key){
+      const k = document.createElement("span");
+      k.className = "keybadge";
+      k.textContent = r.key;
+      title.appendChild(k);
+    }
+    const d = document.createElement("span");
+    d.className = "dwellbadge";
+    d.textContent = (r.dwell ?? 3) + "s";
+    title.appendChild(d);
+    main.appendChild(title);
+
+    // Meter plus a tick at the threshold, so the headroom is visible.
+    const meter = document.createElement("div");
+    meter.className = "meter";
+    meter.innerHTML = `<i data-bar="${i}"></i><u></u>`;
+    meter.querySelector("u").style.left =
+      ((r.thresh ?? 0.82) * 100).toFixed(0) + "%";
+    main.appendChild(meter);
+    row.appendChild(main);
+
+    // Live footage never matches a stored frame perfectly - the scene behind
+    // the thing you marked keeps moving - so the threshold has to be tunable
+    // against the meter rather than fixed at creation.
+    const tune = document.createElement("input");
+    tune.type = "range";
+    tune.className = "rulethresh";
+    tune.min = "0.2"; tune.max = "0.98"; tune.step = "0.01";
+    tune.value = r.thresh ?? 0.82;
+    tune.addEventListener("input", () => {
+      r.thresh = parseFloat(tune.value);
+      meter.querySelector("u").style.left = (r.thresh * 100).toFixed(0) + "%";
+      score.textContent = r.thresh.toFixed(2);
+    });
+    tune.addEventListener("change", () => {
+      send({t:"rule_thresh", i, thresh: r.thresh});
+      haptic("tap");
+    });
+    main.appendChild(tune);
+
+    const score = document.createElement("span");
+    score.className = "rulescore";
+    score.dataset.i = i;
+    score.textContent = "—";
+    row.appendChild(score);
+
+    // Measures the real score while the state is on screen and sets the
+    // threshold from it - the only way to get a number that means anything.
+    const test = document.createElement("button");
+    test.textContent = "test";
+    test.addEventListener("click", () => {
+      haptic("tap");
+      test.textContent = "…";
+      send({t:"rule_test", i, seconds:3});
+      setTimeout(() => { test.textContent = "test"; }, 3600);
+    });
+    row.appendChild(test);
+
+    const del = document.createElement("button");
+    del.textContent = "del";
+    del.addEventListener("click", () => {
+      send({t:"rule_del", i});
+      rules.splice(i, 1);
+      renderRules();
+    });
+    row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+
+function loadRules(){
+  return fetch("/profile.json").then(r => r.json()).then(p => {
+    rules = p.rules || [];
+    renderRules();
+    macros = normaliseMacros(p.macros);
+    renderMacroGrid();
+    applyEnemyTracking(p);
+  }).catch(() => {
+    rules = []; renderRules();
+    macros = normaliseMacros([]); renderMacroGrid();
+  });
+}
+
+(function ruleCapture(){
+  const wrap = $("capwrap"), box = $("capbox"), grip = box.querySelector(".grip");
+  let mark = {sx:0.40, sy:0.40, sw:0.16, sh:0.10};
+
+  function syncAlertPreview(){
+    $("alert-preview-name").textContent = $("rule-name").value.trim() || "LOW AMMO";
+    $("alert-preview-msg").textContent = $("rule-msg").value.trim() || "Reload now";
+    const key = $("rule-key").value.trim();
+    $("alert-preview-key").textContent = key ? `Key · ${key}` : "Key · none";
+    $("alert-preview-dwell").textContent = `Min · ${parseFloat($("rule-dwell").value) || 3}s`;
+  }
+  for (const id of ["rule-name", "rule-msg", "rule-key", "rule-dwell"])
+    $(id).addEventListener("input", syncAlertPreview);
+  syncAlertPreview();
+
+  function paint(){
+    box.style.left   = (mark.sx * 100) + "%";
+    box.style.top    = (mark.sy * 100) + "%";
+    box.style.width  = (mark.sw * 100) + "%";
+    box.style.height = (mark.sh * 100) + "%";
+  }
+
+  function drag(el, resizing){
+    let pid = null, ax = 0, ay = 0, base = null;
+    el.addEventListener("pointerdown", e => {
+      pid = e.pointerId; ax = e.clientX; ay = e.clientY; base = {...mark};
+      el.setPointerCapture(pid);
+      e.preventDefault(); e.stopPropagation();
+    });
+    el.addEventListener("pointermove", e => {
+      if (e.pointerId !== pid) return;
+      const r = wrap.getBoundingClientRect();
+      const dx = (e.clientX - ax) / r.width, dy = (e.clientY - ay) / r.height;
+      if (resizing){
+        mark.sw = Math.max(0.02, Math.min(base.sw + dx, 1 - base.sx));
+        mark.sh = Math.max(0.02, Math.min(base.sh + dy, 1 - base.sy));
+      } else {
+        mark.sx = Math.max(0, Math.min(base.sx + dx, 1 - mark.sw));
+        mark.sy = Math.max(0, Math.min(base.sy + dy, 1 - mark.sh));
+      }
+      paint();
+      e.preventDefault(); e.stopPropagation();
+    });
+    const end = e => { if (e.pointerId === pid) pid = null; };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+  }
+  drag(box, false);
+  drag(grip, true);
+
+  $("rule-add").addEventListener("click", () => {
+    $("gamecfg").classList.remove("on");
+    $("rulecap").classList.add("on");
+    $("rulebody").classList.remove("on");
+    $("countdown").classList.add("on");
+    document.querySelector(".alert-flow span:last-child").classList.remove("on");
+    syncAlertPreview();
+
+    // The countdown exists so you can be holding the state on the PC when the
+    // grab happens - the whole point is capturing the screen mid-game.
+    let n = 3;
+    $("countnum").textContent = n;
+    const tick = setInterval(() => {
+      n -= 1;
+      $("countnum").textContent = n > 0 ? n : "•";
+      if (n > 0) return;
+      clearInterval(tick);
+      $("capshot").src = "/snapshot.jpg?t=" + Date.now();
+      $("countdown").classList.remove("on");
+      $("rulebody").classList.add("on");
+      document.querySelector(".alert-flow span:last-child").classList.add("on");
+      paint();
+    }, 1000);
+  });
+
+  $("rule-cancel").addEventListener("click", () => {
+    $("rulecap").classList.remove("on");
+    $("gamecfg").classList.add("on");
+  });
+
+  $("rule-save").addEventListener("click", () => {
+    send({t:"rule_add",
+          name: $("rule-name").value.trim() || "ALERT",
+          msg:  $("rule-msg").value.trim(),
+          key:  $("rule-key").value.trim(),      // blank is fine - no button
+          dwell: parseFloat($("rule-dwell").value) || 3,
+          thresh: 0.82, ...mark});
+    $("rule-name").value = $("rule-msg").value = $("rule-key").value = "";
+    $("rule-dwell").value = 3;
+    syncAlertPreview();
+    $("rulecap").classList.remove("on");
+    $("gamecfg").classList.add("on");
+    setTimeout(loadRules, 350);   // let the PC finish cropping the reference
+  });
+})();
+
+/* ------------------------------------------------------------- alerts -- */
+/* One alert on screen at a time, each guaranteed its minimum time.
+   Two problems this solves. A knock or a kill can flash for well under a
+   second - long enough for the matcher, far too short to read - so an alert
+   that has already cleared still serves its full dwell. And several rules
+   firing at once used to stack into a wall of boxes, so they now take turns:
+   whatever is still true goes to the back of the queue when its turn ends and
+   comes round again, which keeps a persistent state visible without letting
+   it monopolise the strip. */
+const alertQueue = [];            // waiting their turn
+const activeAlerts = new Set();   // rule indices the PC currently says are true
+let showing = null, showUntil = 0;
+
+function queueAlert(a){
+  if (a.on){
+    activeAlerts.add(a.i);
+    const known = showing?.i === a.i || alertQueue.some(q => q.i === a.i);
+    if (!known){
+      alertQueue.push({i:a.i, name:a.name, msg:a.msg, key:a.key,
+                       enemy: Boolean(a.enemy),
+                       dwell: Math.max(0.5, a.dwell || 3) * 1000});
+    }
+  } else {
+    // Deliberately not removed from the queue: a brief event must still be
+    // shown once, in full, even though it is already over.
+    activeAlerts.delete(a.i);
+  }
+}
+
+function renderAlert(a){
+  const host = $("alerts");
+  host.innerHTML = "";
+  if (!a) return;
+  const el = document.createElement("div");
+  el.className = "alert";
+  if (a.enemy) el.classList.add("enemy-alert");
+  const name = document.createElement("b");
+  name.textContent = a.name;
+  el.appendChild(name);
+  if (a.msg){
+    const msg = document.createElement("span");
+    msg.textContent = a.msg;
+    el.appendChild(msg);
+  }
+  if (a.key){                     // no key means information only
+    const btn = document.createElement("button");
+    btn.textContent = a.key;
+    btn.addEventListener("click", () => { haptic("tap"); send({t:"key", k:a.key}); });
+    el.appendChild(btn);
+  }
+  host.appendChild(el);
+  haptic("alert");        // it arrived without you asking - say so
+}
+
+setInterval(() => {
+  const now = Date.now();
+  if (showing && now >= showUntil){
+    if (activeAlerts.has(showing.i) && alertQueue.length){
+      alertQueue.push(showing);   // still true, but let the others speak
+      showing = null;
+    } else if (activeAlerts.has(showing.i)){
+      showUntil = now + showing.dwell;   // still true, nothing waiting: hold
+    } else {
+      showing = null;
+    }
+    if (!showing) renderAlert(null);
+  }
+  if (!showing && alertQueue.length){
+    showing = alertQueue.shift();
+    showUntil = now + showing.dwell;
+    renderAlert(showing);
+  }
+}, 150);
+
+function clearAlerts(){
+  alertQueue.length = 0;
+  activeAlerts.clear();
+  showing = null;
+  renderAlert(null);
+}
+
+function onServerMessage(m){
+  if (m.t === "calibrated"){
+    if (rules[m.i]){
+      rules[m.i].thresh = m.thresh;
+      renderRules();
+    }
+    $("rule-note").innerHTML = m.trusted
+      ? `Matched at <b>${m.best.toFixed(2)}</b> — threshold set to <b>${m.thresh}</b>.`
+      : `Only reached <b>${m.best.toFixed(2)}</b>, so the state had probably gone `
+        + `from the screen. Threshold left at <b>${m.thresh}</b> — press `
+        + `<b>test</b> while it is showing to measure it properly.`;
+  }
+  else if (m.t === "profiles"){
+    library = m.v || [];
+    activeId = m.active;
+    renderLibrary();
+  }
+  else if (m.t === "alert") queueAlert(m);
+  else if (m.t === "enemy_status"){
+    enemyEnabled = Boolean(m.enabled);
+    enemyAvailable = Boolean(m.available);
+    renderEnemyControls();
+    if (!enemyAvailable)
+      $("hint").textContent = "Enemy scan needs YOLO or OpenCV. Restart with Start GyroAim.bat to install it.";
+  }
+  else if (m.t === "enemy_detected"){
+    flashEnemyWarning();
+    queueAlert({t:"alert", i:-1000, name:"Enemy detected",
+                msg:"", key:"", dwell:1.8, on:true, enemy:true});
+  }
+  else if (m.t === "enemy_clear"){
+    queueAlert({i:-1000, on:false});
+  }
+  else if (m.t === "scores"){
+    m.v.forEach((v, i) => {
+      const hit = v >= (rules[i]?.thresh ?? 0.82);
+      const num = document.querySelector(`.rulescore[data-i="${i}"]`);
+      if (num){
+        num.textContent = v.toFixed(2);
+        num.classList.toggle("hit", hit);
+      }
+      const bar = document.querySelector(`[data-bar="${i}"]`);
+      if (bar){
+        // Correlation runs -1..1; only the positive half is meaningful here.
+        bar.style.width = (Math.max(0, Math.min(1, v)) * 100).toFixed(1) + "%";
+        bar.classList.toggle("hit", hit);
+      }
+    });
+  }
+}
+
+/* Streams are only pulled while the live screen is up: each open MJPEG
+   response holds a capture thread on the PC, so leaving must drop them all. */
+function hudStart(){
+  const layer = $("hudlayer");
+  layer.innerHTML = "";
+  if (!hud.on || !hud.regions.length) return;
+  hud.regions.forEach((r, i) => {
+    const img = document.createElement("img");
+    img.style.left   = (r.dx * 100) + "%";
+    img.style.top    = (r.dy * 100) + "%";
+    img.style.width  = (r.dw * 100) + "%";
+    img.style.height = (r.dh * 100) + "%";
+    img.src = `/region.mjpg?i=${i}&t=${Date.now()}`;
+    layer.appendChild(img);
+  });
+  layer.classList.add("on");
+}
+function hudStop(){
+  $("hudlayer").classList.remove("on");
+  $("hudlayer").innerHTML = "";   // dropping the <img> ends the HTTP stream
+  $("macrobar").innerHTML = "";
+}
+
+/* ---------------------------------------------------------- navigation -- */
+$("go").addEventListener("click", async () => {
+  await startSensors();
+  // Lock before the panels are placed: hudStart positions them as fractions
+  // of the viewport, which must already be the landscape one.
+  await lockLandscape();
+  aimMode = "standard";
+  resetAimPipeline();
+  $("setup").classList.remove("on");
+  $("live").classList.add("on");
+  hudStart();
+  renderMacroBar();
+  recStart();
+  setTimeout(() => $("live").classList.add("settled"), 2500);
+
+  try { await navigator.wakeLock.request("screen"); } catch {}
+});
+
+$("exit").addEventListener("click", async () => {
+  frozen = false;
+  clearActions();
+  hudStop();
+  clearAlerts();
+  $("live").classList.remove("on", "settled");
+  showScreen("setup");
+  // Upload the run. Runs under three seconds are dropped rather than
+  // cluttering the list with accidental taps.
+  const id = await recStop();
+  if (id) loadSessions();
+});
+
+$("rifle-go").addEventListener("click", async () => {
+  await startSensors();
+  await lockLandscape();
+  aimMode = "rifle";
+  resetAimPipeline();
+  riflePX = riflePY = 0;
+  $("rifle-cross").style.transform = "";
+  $("setup").classList.remove("on");
+  $("rifle").classList.add("on");
+  beginRifleCalibration();
+
+  try { await navigator.wakeLock.request("screen"); } catch {}
+});
+
+$("rifle-recal").addEventListener("click", () => {
+  resetAimPipeline();
+  riflePX = riflePY = 0;
+  $("rifle-cross").style.transform = "";
+  beginRifleCalibration();
+});
+
+$("rifle-exit").addEventListener("click", () => {
+  clearTimeout(rifleCalTimer);
+  rifleCal = null;
+  rifleReady = false;
+  aimMode = "standard";
+  resetAimPipeline();
+  $("rifle").classList.remove("on");
+  $("setup").classList.add("on");
+});
+
+/* ----------------------------------------------------- movement stick -- */
+/* A floating stick driving WASD. The keys are digital, so deflection is
+   thresholded into held keys rather than sent as a magnitude - and the
+   thresholds have hysteresis, because a thumb resting exactly on a single
+   cutoff would otherwise machine-gun the key down and up many times a second.
+
+   Only transitions are sent, so a held direction costs one packet, not a
+   stream of them. Releasing the stick releases every key it was holding,
+   including on pointercancel - otherwise a call or notification stealing the
+   touch would leave the player sprinting into a wall. */
+(function moveStick(){
+  const el = $("z-vpad"), knob = $("vknob");
+  let pid = null, ox = 0, oy = 0, radius = 1;
+  let held = new Set();
+
+  /* Eight sectors by direction, not a threshold per axis. Testing each axis
+     separately meant a diagonal had to clear the cutoff on both at once -
+     roughly 1.4x the travel of a straight push - so aiming between W and A
+     often engaged neither. Sectors give every direction the same reach. */
+  const OCTANTS = [
+    ["move_right"],                 // 0  right
+    ["move_fwd", "move_right"],     // 1  up-right
+    ["move_fwd"],                   // 2  up
+    ["move_fwd", "move_left"],      // 3  up-left
+    ["move_left"],                  // 4  left
+    ["move_back", "move_left"],     // 5  down-left
+    ["move_back"],                  // 6  down
+    ["move_back", "move_right"],    // 7  down-right
+  ];
+
+  function apply(x, y){
+    // Hysteresis on the magnitude: once moving, you have to fall well back
+    // inside before the keys let go, so a thumb parked near the cutoff cannot
+    // rattle them on and off.
+    const mag = Math.hypot(x, y);
+    const live = held.size ? mag > cfg.moveOff : mag > cfg.moveOn;
+    const want = new Set(
+      live ? OCTANTS[((Math.round(Math.atan2(-y, x) / (Math.PI / 4)) % 8) + 8) % 8]
+           : []);
+
+    let changed = false;
+    for (const id of held) if (!want.has(id)){ send({t:"btn", id, down:false}); changed = true; }
+    for (const id of want) if (!held.has(id)){ send({t:"btn", id, down:true});  changed = true; }
+    // Only on a direction change, never while simply held - a continuous
+    // rumble under the thumb would be both distracting and costly.
+    if (changed && want.size) haptic("light");
+    setAction("moving", want.size > 0);
+    held = want;
+  }
+
+  function track(e){
+    let dx = (e.clientX - ox) / radius;
+    let dy = (e.clientY - oy) / radius;
+    // Clamp to the circle rather than per axis, so the ball rides the ring
+    // instead of reaching further diagonally than it does straight.
+    const m = Math.hypot(dx, dy);
+    if (m > 1){ dx /= m; dy /= m; }
+    apply(dx, dy);
+    // The knob is centred by its own translate, so the deflection has to be
+    // composed on top of it rather than replacing it.
+    knob.style.transform = "translate(-50%,-50%) "
+      + `translate(${(dx * radius).toFixed(1)}px, ${(dy * radius).toFixed(1)}px)`;
+  }
+
+  el.addEventListener("pointerdown", e => {
+    pid = e.pointerId;
+    // Fixed stick: the centre is the base's centre, not wherever you touched.
+    // Travel is measured from the rendered size, so the stick keeps working if
+    // the column is a different width on another screen.
+    const r = el.getBoundingClientRect();
+    ox = r.left + r.width  / 2;
+    oy = r.top  + r.height / 2;
+    radius = Math.max(1, (r.width - knob.offsetWidth) / 2);
+    el.setPointerCapture(pid);
+    el.classList.add("hit");
+    track(e);                 // touching near the rim should engage at once
+    e.preventDefault();
+  });
+
+  el.addEventListener("pointermove", e => {
+    if (e.pointerId !== pid) return;
+    track(e);
+    e.preventDefault();
+  });
+
+  const end = e => {
+    if (e.pointerId !== pid) return;
+    pid = null;
+    apply(0, 0);                 // let go of every key the stick was holding
+    knob.style.transform = "translate(-50%,-50%)";
+    el.classList.remove("hit");
+  };
+  el.addEventListener("pointerup", end);
+  el.addEventListener("pointercancel", end);
+})();
+
+// Pull the profile at startup: the macro bar has to work whether or not the
+// Game HUD screen was opened this session.
+loadRules();
+loadLibrary();
+fetch("/profile.json").then(r => r.json()).then(p => {
+  applySetupIdentity(p);
+  applyTuning(p.tuning);
+  applyEnemyTracking(p);
+}).catch(() => {});
+startSensors();
+connect();
+</script>
+</body>
+</html>
